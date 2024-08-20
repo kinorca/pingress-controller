@@ -14,7 +14,9 @@ RUN --mount=type=cache,target=/work/proxy/target \
 
 FROM scratch
 
-LABEL authors="cerussite"
+LABEL org.opencontainers.image.source="https://github.com/kinorca/pingress-controller"
+LABEL org.opencontainers.image.authors="SiLeader <sileader.dev@gmail.com>"
+LABEL org.opencontainers.image.url="https://github.com/kinorca/pingress-controller"
 
 COPY --from=builder /pingress-proxy-server /usr/local/bin/pingress-proxy-server
 
