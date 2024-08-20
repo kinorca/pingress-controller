@@ -1,0 +1,30 @@
+[package]
+name = "pingress-controller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pingress-config = { path = "../pingress-config" }
+
+# async
+tokio = { version = "1.39.3", features = ["full"] }
+futures = "0.3.30"
+
+# log
+log = "0.4.22"
+env_logger = "0.11.5"
+
+# kubernetes
+kube = { version = "0.93.1", features = ["runtime"] }
+k8s-openapi = { version = "0.22.0", features = ["latest"] }
+
+# command line
+clap = { version = "4.5.16", features = ["derive"] }
+
+# serde
+serde = "1.0.208"
+serde_json = "1.0.125"
+
+# misc
+sha2 = "0.10.8"
+hex = "0.4.3"
