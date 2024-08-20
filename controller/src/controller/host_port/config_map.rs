@@ -1,5 +1,5 @@
-use crate::controller::node_port::ingresses::GetFromIngresses;
-use crate::controller::node_port::{
+use crate::controller::host_port::ingresses::GetFromIngresses;
+use crate::controller::host_port::{
     manifest_labels, Context, CONFIG_KEY, CONFIG_MAP_NAME, FIELD_MANAGER,
 };
 use k8s_openapi::api::core::v1::ConfigMap;
@@ -45,8 +45,10 @@ pub(super) async fn apply_config_map(
 
 pub(super) async fn cleanup_config_map(ctx: &Context) -> Result<(), kube::Error> {
     let api: Api<ConfigMap> = Api::namespaced(ctx.client.clone(), ctx.namespace.as_str());
-    api.delete(CONFIG_MAP_NAME, &DeleteParams::default())
-        .await?;
+    if api.get_opt(CONFIG_MAP_NAME).await?.is_some() {
+        api.delete(CONFIG_MAP_NAME, &DeleteParams::default())
+            .await?;
+    }
 
     Ok(())
 }

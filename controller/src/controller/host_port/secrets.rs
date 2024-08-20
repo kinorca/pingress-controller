@@ -1,5 +1,5 @@
-use crate::controller::node_port::ingresses::{GetFromIngresses, TlsSecret};
-use crate::controller::node_port::{manifest_labels, Context, FIELD_MANAGER, TLS_SECRET_NAME};
+use crate::controller::host_port::ingresses::{GetFromIngresses, TlsSecret};
+use crate::controller::host_port::{manifest_labels, Context, FIELD_MANAGER, TLS_SECRET_NAME};
 use k8s_openapi::api::core::v1::Secret;
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -52,8 +52,10 @@ pub(super) async fn apply_tls_secrets(
 
 pub(super) async fn cleanup_tls_secret(ctx: &Context) -> Result<(), kube::Error> {
     let api: Api<Secret> = Api::namespaced(ctx.client.clone(), ctx.namespace.as_str());
-    api.delete(TLS_SECRET_NAME, &DeleteParams::default())
-        .await?;
+    if api.get_opt(TLS_SECRET_NAME).await?.is_some() {
+        api.delete(TLS_SECRET_NAME, &DeleteParams::default())
+            .await?;
+    }
     Ok(())
 }
 

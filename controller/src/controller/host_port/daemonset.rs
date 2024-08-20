@@ -1,5 +1,6 @@
-use crate::controller::node_port::{
-    manifest_labels, Context, CONFIG_KEY, CONFIG_MAP_NAME, FIELD_MANAGER, TLS_SECRET_NAME,
+use crate::controller::host_port::{
+    manifest_labels, Context, CONFIG_KEY, CONFIG_MAP_NAME, FIELD_MANAGER, SECRET_BASE_PATH,
+    TLS_SECRET_NAME,
 };
 use k8s_openapi::api::apps::v1::{DaemonSet, DaemonSetSpec};
 use k8s_openapi::api::core::v1::{
@@ -22,10 +23,6 @@ pub(super) async fn apply_daemonset(
             name: Some(DAEMONSET_NAME.to_string()),
             namespace: Some(ctx.namespace.clone()),
             labels: manifest_labels(),
-            annotations: Some(BTreeMap::from([(
-                "kinorca.com/pingress-proxy-server-config-digest".to_string(),
-                config_digest,
-            )])),
             ..ObjectMeta::default()
         },
         spec: Some(DaemonSetSpec {
@@ -42,15 +39,19 @@ pub(super) async fn apply_daemonset(
                         "app.kubernetes.io/name".to_string(),
                         "pingress-proxy-server".to_string(),
                     )])),
+                    annotations: Some(BTreeMap::from([(
+                        "kinorca.com/pingress-proxy-server-config-digest".to_string(),
+                        config_digest,
+                    )])),
                     ..ObjectMeta::default()
                 }),
                 spec: Some(PodSpec {
                     containers: vec![Container {
                         command: Some(vec![
-                            "/bin/pigress-proxy-server".to_string(),
+                            "/usr/local/bin/pingress-proxy-server".to_string(),
                             format!("--config=/etc/pingress/config/{CONFIG_KEY}"),
-                            "--listen-http=8080".to_string(),
-                            "--listen-https=8443".to_string(),
+                            "--listen-http=0.0.0.0:8080".to_string(),
+                            "--listen-https=0.0.0.0:8443".to_string(),
                         ]),
                         image: Some(ctx.proxy_server_image.clone()),
                         name: "pingress-proxy-server".to_string(),
@@ -85,7 +86,7 @@ pub(super) async fn apply_daemonset(
                                 ..VolumeMount::default()
                             },
                             VolumeMount {
-                                mount_path: CONFIG_MAP_NAME.to_string(),
+                                mount_path: SECRET_BASE_PATH.to_string(),
                                 name: TLS_SECRET_NAME.to_string(),
                                 read_only: Some(true),
                                 ..VolumeMount::default()
@@ -101,7 +102,7 @@ pub(super) async fn apply_daemonset(
                     node_selector: Some(ctx.node_selector.clone()),
                     volumes: Some(vec![
                         Volume {
-                            name: "tls-secrets".to_string(),
+                            name: TLS_SECRET_NAME.to_string(),
                             secret: Some(SecretVolumeSource {
                                 default_mode: Some(0o700),
                                 secret_name: Some(TLS_SECRET_NAME.to_string()),
@@ -110,9 +111,9 @@ pub(super) async fn apply_daemonset(
                             ..Volume::default()
                         },
                         Volume {
-                            name: "proxy-config".to_string(),
+                            name: CONFIG_MAP_NAME.to_string(),
                             config_map: Some(ConfigMapVolumeSource {
-                                name: Some("pingress-proxy-config".to_string()),
+                                name: Some(CONFIG_MAP_NAME.to_string()),
                                 ..ConfigMapVolumeSource::default()
                             }),
                             ..Volume::default()
@@ -139,6 +140,8 @@ pub(super) async fn apply_daemonset(
 
 pub(super) async fn cleanup_daemonset(ctx: &Context) -> Result<(), kube::Error> {
     let api: Api<DaemonSet> = Api::namespaced(ctx.client.clone(), ctx.namespace.as_str());
-    api.delete(DAEMONSET_NAME, &DeleteParams::default()).await?;
+    if api.get_opt(DAEMONSET_NAME).await?.is_some() {
+        api.delete(DAEMONSET_NAME, &DeleteParams::default()).await?;
+    }
     Ok(())
 }

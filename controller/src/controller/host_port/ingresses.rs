@@ -1,10 +1,10 @@
-use crate::controller::node_port::SECRET_BASE_PATH;
+use crate::controller::host_port::SECRET_BASE_PATH;
 use k8s_openapi::api::networking::v1::{Ingress, IngressSpec};
 use kube::ResourceExt;
 use pingress_config::{Backend, HttpPath, PathRule, PingressConfiguration, Port, Tls};
 use std::collections::HashSet;
 
-pub(in crate::controller::node_port) struct TlsSecret {
+pub(in crate::controller::host_port) struct TlsSecret {
     pub host: String,
     pub secret: String,
     pub namespace: String,

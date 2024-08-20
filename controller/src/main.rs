@@ -1,11 +1,20 @@
 mod controller;
 
-use crate::controller::run_node_port;
+use crate::controller::run_host_port;
 use clap::{Parser, ValueEnum};
 use kube::Client;
-use log::info;
+use log::{debug, info};
+use tokio::signal::unix::SignalKind;
+
+#[macro_export]
+macro_rules! try_with_log {
+    ($trying:expr) => {
+        $trying.inspect_err(|e| ::log::error!("Error: {e}"))?
+    };
+}
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
+#[value(rename_all = "PascalCase")]
 enum Type {
     HostPort,
     LoadBalancer,
@@ -25,7 +34,7 @@ struct Args {
     proxy_server_image: String,
 
     /// Proxy deployment namespace (--backend=HostPort only)
-    #[clap(long, default_value = "pingora-system")]
+    #[clap(long, default_value = "pingress-system")]
     namespace: String,
 
     /// Node selector labels. (--backend=HostPort only) (e.g.: "example.com/node-type=external-network")
@@ -35,15 +44,18 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    println!("Hello, world!");
+    env_logger::init();
+
+    info!("Starting pingress controller");
 
     let args = Args::parse();
+    debug!("Command line arguments: {args:?}");
 
     let client = Client::try_default().await.unwrap();
 
     match args.backend {
         Type::HostPort => {
-            run_node_port(
+            run_host_port(
                 client,
                 shutdown_signal(),
                 args.namespace,
@@ -60,7 +72,9 @@ async fn main() {
 }
 
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
+    tokio::signal::unix::signal(SignalKind::terminate())
+        .unwrap()
+        .recv()
         .await
         .expect("Failed to listen signal");
     info!("Receive signal");

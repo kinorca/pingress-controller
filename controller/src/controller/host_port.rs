@@ -4,8 +4,7 @@ mod ingresses;
 mod reconcile;
 mod secrets;
 
-use crate::controller::node_port::reconcile::reconcile;
-use crate::controller::INGRESS_FIELD_SELECTOR;
+use crate::controller::host_port::reconcile::reconcile;
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::DaemonSet;
 use k8s_openapi::api::core::v1::Service;
@@ -25,7 +24,7 @@ const CONFIG_MAP_NAME: &str = "pingress-config";
 const CONFIG_KEY: &str = "proxy.json";
 const SECRET_BASE_PATH: &str = "/etc/pingress/keys";
 
-pub(crate) async fn run_node_port<F>(
+pub(crate) async fn run_host_port<F>(
     client: Client,
     shutdown_signal: F,
     namespace: String,
@@ -44,9 +43,7 @@ pub(crate) async fn run_node_port<F>(
         .collect();
 
     let ingress_api: Api<Ingress> = Api::all(client.clone());
-    let ingress_wc = kube::runtime::watcher::Config::default()
-        .any_semantic()
-        .fields(INGRESS_FIELD_SELECTOR);
+    let ingress_wc = kube::runtime::watcher::Config::default().any_semantic();
 
     let daemonset_api: Api<DaemonSet> = Api::namespaced(client.clone(), namespace.as_str());
     let daemonset_wc = kube::runtime::watcher::Config::default()

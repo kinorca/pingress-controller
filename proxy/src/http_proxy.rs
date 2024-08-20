@@ -24,18 +24,23 @@ impl ProxyHttp for PingressHttpProxy {
         session: &mut pingora::proxy::Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let authority = match session.req_header().uri.authority() {
+        let host = match session
+            .req_header()
+            .headers
+            .get("Host")
+            .and_then(|h| h.to_str().ok())
+        {
             Some(a) => a,
             None => return pingora::Error::err(ErrorType::InvalidHTTPHeader),
         };
         let path = session.req_header().uri.path();
 
-        match self.proxy_map.get_backend(authority.host(), path) {
+        match self.proxy_map.get_backend(host, path) {
             None => pingora::Error::err(ErrorType::ConnectNoRoute),
             Some(backend_host) => Ok(Box::new(HttpPeer::new(
                 backend_host,
                 false,
-                authority.to_string(),
+                host.to_string(),
             ))),
         }
     }

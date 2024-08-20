@@ -20,14 +20,15 @@ mod tls;
 #[derive(Debug, Parser)]
 struct Args {
     /// Listen host and port number
-    #[clap(long, default_value = "80")]
+    #[clap(long, default_value = "0.0.0.0:80")]
     listen_http: String,
 
     /// Listen host and port number
-    #[clap(long, default_value = "443")]
+    #[clap(long, default_value = "0.0.0.0:443")]
     listen_https: String,
 
     /// Path to configuration file
+    #[clap(long)]
     config: String,
 }
 

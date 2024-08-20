@@ -2,3 +2,7 @@
 /controller/target
 /pingress-config/target
 .idea
+.vscode
+
+.DS_Store
+Thumbs.db

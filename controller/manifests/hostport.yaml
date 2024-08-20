@@ -1,0 +1,86 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pingress-controller-role
+  namespace: pingress-system
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+    verbs:
+      - get
+      - watch
+      - patch
+      - delete
+      - list
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+      - configmaps
+    verbs:
+      - get
+      - patch
+      - delete
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pingress-controller-cluster-role
+  namespace: pingress-system
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+      - services
+    verbs:
+      - watch
+      - get
+      - list
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - watch
+      - get
+      - list
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pingress-controller-role-binding
+  namespace: pingress-system
+subjects:
+  - kind: ServiceAccount
+    namespace: pingress-system
+    name: pingress-controller-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pingress-controller-role
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pingress-controller-cluster-role-binding
+  namespace: pingress-system
+subjects:
+  - kind: ServiceAccount
+    namespace: pingress-system
+    name: pingress-controller-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pingress-controller-cluster-role
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pingress-controller-user
+  namespace: pingress-system
