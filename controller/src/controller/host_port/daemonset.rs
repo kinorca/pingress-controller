@@ -14,10 +14,7 @@ use std::collections::BTreeMap;
 
 const DAEMONSET_NAME: &str = "pingress-proxy-server";
 
-pub(super) async fn apply_daemonset(
-    ctx: &Context,
-    config_digest: String,
-) -> Result<(), kube::Error> {
+pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
     let daemonset = DaemonSet {
         metadata: ObjectMeta {
             name: Some(DAEMONSET_NAME.to_string()),
@@ -38,10 +35,6 @@ pub(super) async fn apply_daemonset(
                     labels: Some(BTreeMap::from([(
                         "app.kubernetes.io/name".to_string(),
                         "pingress-proxy-server".to_string(),
-                    )])),
-                    annotations: Some(BTreeMap::from([(
-                        "kinorca.com/pingress-proxy-server-config-digest".to_string(),
-                        config_digest,
                     )])),
                     ..ObjectMeta::default()
                 }),

@@ -5,18 +5,15 @@ mod reconcile;
 mod secrets;
 
 use crate::controller::host_port::reconcile::reconcile;
-use futures::StreamExt;
+use crate::controller::{handle_error, LogControllerResult};
 use k8s_openapi::api::apps::v1::DaemonSet;
 use k8s_openapi::api::core::v1::Service;
 use k8s_openapi::api::networking::v1::Ingress;
-use kube::runtime::controller::Action;
 use kube::runtime::Controller;
 use kube::{Api, Client};
-use log::{error, info};
 use std::collections::BTreeMap;
-use std::future::{ready, Future};
+use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
 
 const FIELD_MANAGER: &str = "kinorca.com/pingress-controller";
 const TLS_SECRET_NAME: &str = "pingress-tls-secret";
@@ -68,21 +65,7 @@ pub(crate) async fn run_host_port<F>(
                 proxy_server_image,
             )),
         )
-        .for_each(|res| {
-            match res {
-                Ok((resource, _action)) => {
-                    info!(
-                        "Reconcile: {} {}",
-                        resource.namespace.unwrap_or("default".to_string()),
-                        resource.name
-                    );
-                }
-                Err(error) => {
-                    error!("Reconcile error: {error}");
-                }
-            }
-            ready(())
-        })
+        .log_controller_result()
         .await;
 }
 
@@ -112,17 +95,15 @@ impl Context {
     }
 }
 
-fn handle_error(
-    _ingress: Arc<Ingress>,
-    _error: &kube::runtime::finalizer::Error<kube::Error>,
-    _ctx: Arc<Context>,
-) -> Action {
-    Action::requeue(Duration::from_secs(5))
-}
-
 fn manifest_labels() -> Option<BTreeMap<String, String>> {
-    Some(BTreeMap::from([(
-        "kinorca.com/managed-by".to_string(),
-        "pingress-controller".to_string(),
-    )]))
+    Some(BTreeMap::from([
+        (
+            "app.kubernetes.io/managed-by".to_string(),
+            "pingress-controller".to_string(),
+        ),
+        (
+            "kinorca.com/pingress-controller-type".to_string(),
+            "host-port".to_string(),
+        ),
+    ]))
 }

@@ -52,8 +52,8 @@ async fn reconcile_impl(ctx: Arc<Context>, _event: Event<Ingress>) -> Result<Act
     }
 
     try_with_log!(apply_tls_secrets(ctx.as_ref(), ingresses.as_slice()).await);
-    let config_digest = try_with_log!(apply_config_map(ctx.as_ref(), ingresses.as_slice()).await);
-    try_with_log!(apply_daemonset(ctx.as_ref(), config_digest).await);
+    try_with_log!(apply_config_map(ctx.as_ref(), ingresses.as_slice()).await);
+    try_with_log!(apply_daemonset(ctx.as_ref()).await);
 
     Ok(Action::await_change())
 }

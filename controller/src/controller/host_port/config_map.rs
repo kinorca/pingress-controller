@@ -7,19 +7,15 @@ use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::Api;
-use sha2::{Digest, Sha512};
 use std::collections::BTreeMap;
 
 pub(super) async fn apply_config_map(
     ctx: &Context,
     ingresses: &[Ingress],
-) -> Result<String, kube::Error> {
+) -> Result<(), kube::Error> {
     let config = ingresses.config();
 
     let config = serde_json::to_string(&config).map_err(kube::Error::SerdeError)?;
-
-    let digest = Sha512::digest(config.as_bytes());
-    let digest = hex::encode(digest.as_slice());
 
     let config_map = ConfigMap {
         metadata: ObjectMeta {
@@ -40,7 +36,7 @@ pub(super) async fn apply_config_map(
     )
     .await?;
 
-    Ok(digest)
+    Ok(())
 }
 
 pub(super) async fn cleanup_config_map(ctx: &Context) -> Result<(), kube::Error> {

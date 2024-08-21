@@ -1,4 +1,5 @@
 /proxy/target/
 /pingress-config/target/
 /controller/target/
+/notify-config-change/target/
 .idea/

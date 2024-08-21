@@ -1,6 +1,6 @@
 mod controller;
 
-use crate::controller::run_host_port;
+use crate::controller::{run_host_port, run_load_balancer};
 use clap::{Parser, ValueEnum};
 use kube::Client;
 use log::{debug, info};
@@ -66,7 +66,14 @@ async fn main() {
             .await
         }
         Type::LoadBalancer => {
-            unimplemented!("--backend=LoadBalancer is not implemented")
+            unimplemented!();
+            run_load_balancer(
+                client,
+                shutdown_signal(),
+                args.image_pull_secret,
+                args.proxy_server_image,
+            )
+            .await
         }
     }
 }
