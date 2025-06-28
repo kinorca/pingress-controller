@@ -1,13 +1,14 @@
 use crate::tls::TlsMap;
 use log::error;
 use nix::sys::signal::Signal;
-use notify::{recommended_watcher, RecursiveMode, Watcher};
+use notify::{RecursiveMode, Watcher, recommended_watcher};
 use pingress_config::PingressConfiguration;
 use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, RwLock};
+use tokio::sync::RwLock;
 
 pub(crate) fn run_reload(watch: &str, config: &str, tls: &Arc<RwLock<TlsMap>>) {
     let (tx, rx) = channel();
@@ -42,12 +43,9 @@ fn reload_tls_map(tls: &Arc<RwLock<TlsMap>>, config: &str) {
         serde_json::from_reader(file).unwrap()
     };
 
-    match tls.write() {
-        Ok(mut t) => {
-            *t = config.into();
-        }
-        Err(e) => {
-            error!("Error: Cannot lock tls map: {e}");
-        }
-    }
+    let tls = tls.clone();
+    tokio::spawn(async move {
+        let mut t = tls.write().await;
+        *t = config.into();
+    });
 }

@@ -1,0 +1,62 @@
+[workspace]
+members = ["controller", "pingress-config", "proxy"]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+pingress-config = { path = "pingress-config" }
+controller = { path = "controller" }
+proxy-server = { path = "proxy" }
+
+tokio = "1.45.1"
+futures = "0.3.31"
+async-trait = "0.1.88"
+
+kube = "1.1.0"
+k8s-openapi = "0.25.0"
+
+pingora = "0.5.0"
+
+clap = "4.5.40"
+
+serde = "1.0.219"
+serde_json = "1.0.140"
+
+notify = "8.0.0"
+nix = "0.30.1"
+
+regex = "1.11.1"
+
+log = "0.4.27"
+env_logger = "0.11.8"
+
+[package]
+name = "pingress-controller"
+edition.workspace = true
+
+[[bin]]
+name = "controller"
+path = "src/controller/main.rs"
+required-features = ["controller"]
+
+[[bin]]
+name = "proxy"
+path = "src/proxy/main.rs"
+required-features = ["proxy"]
+
+[dependencies]
+controller = { workspace = true, optional = true }
+proxy-server = { workspace = true, optional = true }
+
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive"] }
+
+log.workspace = true
+env_logger.workspace = true
+
+kube = { workspace = true, optional = true }
+
+[features]
+controller = ["dep:controller", "dep:kube"]
+proxy = ["dep:proxy-server"]

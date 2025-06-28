@@ -5,7 +5,7 @@ mod reconcile;
 mod secrets;
 
 use crate::controller::host_port::reconcile::reconcile;
-use crate::controller::{handle_error, LogControllerResult};
+use crate::controller::{LogControllerResult, handle_error};
 use k8s_openapi::api::apps::v1::DaemonSet;
 use k8s_openapi::api::core::v1::Service;
 use k8s_openapi::api::networking::v1::Ingress;
@@ -21,7 +21,7 @@ const CONFIG_MAP_NAME: &str = "pingress-config";
 const CONFIG_KEY: &str = "proxy.json";
 const SECRET_BASE_PATH: &str = "/etc/pingress/keys";
 
-pub(crate) async fn run_host_port<F>(
+pub async fn run_host_port<F>(
     client: Client,
     shutdown_signal: F,
     namespace: String,

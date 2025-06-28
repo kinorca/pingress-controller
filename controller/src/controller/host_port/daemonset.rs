@@ -1,6 +1,6 @@
 use crate::controller::host_port::{
-    manifest_labels, Context, CONFIG_KEY, CONFIG_MAP_NAME, FIELD_MANAGER, SECRET_BASE_PATH,
-    TLS_SECRET_NAME,
+    CONFIG_KEY, CONFIG_MAP_NAME, Context, FIELD_MANAGER, SECRET_BASE_PATH, TLS_SECRET_NAME,
+    manifest_labels,
 };
 use k8s_openapi::api::apps::v1::{DaemonSet, DaemonSetSpec};
 use k8s_openapi::api::core::v1::{
@@ -8,8 +8,8 @@ use k8s_openapi::api::core::v1::{
     PodTemplateSpec, SecretVolumeSource, SecurityContext, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
-use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::Api;
+use kube::api::{DeleteParams, Patch, PatchParams};
 use std::collections::BTreeMap;
 
 const DAEMONSET_NAME: &str = "pingress-proxy-server";
@@ -87,11 +87,10 @@ pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
                         ]),
                         ..Container::default()
                     }],
-                    image_pull_secrets: ctx.image_pull_secret.as_ref().map(|s| {
-                        vec![LocalObjectReference {
-                            name: Some(s.clone()),
-                        }]
-                    }),
+                    image_pull_secrets: ctx
+                        .image_pull_secret
+                        .as_ref()
+                        .map(|s| vec![LocalObjectReference { name: s.clone() }]),
                     node_selector: Some(ctx.node_selector.clone()),
                     volumes: Some(vec![
                         Volume {
@@ -106,7 +105,7 @@ pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
                         Volume {
                             name: CONFIG_MAP_NAME.to_string(),
                             config_map: Some(ConfigMapVolumeSource {
-                                name: Some(CONFIG_MAP_NAME.to_string()),
+                                name: CONFIG_MAP_NAME.to_string(),
                                 ..ConfigMapVolumeSource::default()
                             }),
                             ..Volume::default()

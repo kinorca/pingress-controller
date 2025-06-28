@@ -1,7 +1,7 @@
 mod reconcile;
 
 use crate::controller::load_balancer::reconcile::reconcile;
-use crate::controller::{handle_error, LogControllerResult};
+use crate::controller::{LogControllerResult, handle_error};
 use k8s_openapi::api::networking::v1::Ingress;
 use kube::runtime::Controller;
 use kube::{Api, Client};
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 
-pub(crate) async fn run_load_balancer<F>(
+pub async fn run_load_balancer<F>(
     client: Client,
     shutdown_signal: F,
     image_pull_secret: Option<String>,

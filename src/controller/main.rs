@@ -1,7 +1,5 @@
-mod controller;
-
-use crate::controller::{run_host_port, run_load_balancer};
 use clap::{Parser, ValueEnum};
+use controller::{run_host_port, run_load_balancer};
 use kube::Client;
 use log::{debug, info};
 use tokio::signal::unix::SignalKind;

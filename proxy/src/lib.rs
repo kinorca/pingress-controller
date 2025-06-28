@@ -1,65 +1,52 @@
 use crate::http_proxy::PingressHttpProxy;
-use crate::tls::{GetTls, TlsMap};
+use crate::tls::GetTls;
+use crate::tls::TlsMap;
 use crate::watcher::run_reload;
 use async_trait::async_trait;
-use clap::Parser;
-use log::{debug, error, info};
-use pingora::listeners::{TlsAccept, TlsSettings};
-use pingora::protocols::ssl::server::TlsAcceptCallbacks;
+use log::error;
+use pingora::listeners::tls::TlsSettings;
+use pingora::listeners::{TlsAccept, TlsAcceptCallbacks};
+use pingora::protocols::tls::TlsRef;
 use pingora::server::Server;
 use pingora::services::Service;
 use pingora::tls::ext::{ssl_use_certificate, ssl_use_private_key};
-use pingora::tls::ssl::{NameType, SslRef};
+use pingora::tls::ssl::NameType;
 use pingress_config::PingressConfiguration;
 use std::fs::File;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread::spawn;
+use tokio::sync::RwLock;
 
 mod http_proxy;
 mod proxy_map;
 mod tls;
 mod watcher;
 
-#[derive(Debug, Parser)]
-struct Args {
-    /// Listen host and port number
-    #[clap(long, default_value = "0.0.0.0:80")]
+pub fn run_server(
+    config_file: String,
+    watch_directory: String,
     listen_http: String,
-
-    /// Listen host and port number
-    #[clap(long, default_value = "0.0.0.0:443")]
     listen_https: String,
-
-    /// Path to configuration file
-    #[clap(long)]
-    config: String,
-
-    /// Watch directory
-    #[clap(long)]
-    watch: String,
-}
-
-fn main() {
-    env_logger::init();
-
-    info!("Starting pingress proxy server");
-
-    let args = Args::parse();
-
-    debug!("Command line args: {args:?}");
-
+) {
     let mut server = Server::new(None).unwrap();
     server.bootstrap();
 
     let tls = {
         let config: PingressConfiguration = {
-            let file = File::open(args.config.as_str()).unwrap();
+            let file = File::open(&config_file).unwrap();
             serde_json::from_reader(file).unwrap()
         };
         Arc::new(RwLock::new(TlsMap::from(config)))
     };
-
-    let services: Vec<Box<dyn Service>> = { vec![create_http_proxy(&server, &args, tls.clone())] };
+    let services: Vec<Box<dyn Service>> = {
+        vec![create_http_proxy(
+            &server,
+            config_file.clone(),
+            &listen_http,
+            &listen_https,
+            tls.clone(),
+        )]
+    };
 
     let mut prometheus_service_http =
         pingora::services::listening::Service::prometheus_http_service();
@@ -69,21 +56,27 @@ fn main() {
     server.add_services(services);
 
     spawn(move || {
-        run_reload(args.watch.as_str(), args.config.as_str(), &tls);
+        run_reload(&watch_directory, &config_file, &tls);
     });
 
     server.run_forever();
 }
 
-fn create_http_proxy(server: &Server, args: &Args, tls: Arc<RwLock<TlsMap>>) -> Box<dyn Service> {
+fn create_http_proxy(
+    server: &Server,
+    config_file: String,
+    listen_http: &str,
+    listen_https: &str,
+    tls: Arc<RwLock<TlsMap>>,
+) -> Box<dyn Service> {
     let mut http_proxy = pingora::proxy::http_proxy_service(
         &server.configuration,
-        PingressHttpProxy::new(args.config.clone()),
+        PingressHttpProxy::new(config_file),
     );
-    http_proxy.add_tcp(args.listen_http.as_str());
+    http_proxy.add_tcp(listen_http);
 
     http_proxy.add_tls_with_settings(
-        args.listen_https.as_str(),
+        listen_https,
         None,
         TlsSettings::with_callbacks(TlsAcceptor::new(tls).into()).unwrap(),
     );
@@ -91,12 +84,12 @@ fn create_http_proxy(server: &Server, args: &Args, tls: Arc<RwLock<TlsMap>>) -> 
     Box::new(http_proxy)
 }
 
-struct TlsAcceptor {
+pub struct TlsAcceptor {
     tls: Arc<RwLock<TlsMap>>,
 }
 
 impl TlsAcceptor {
-    fn new(tls: Arc<RwLock<TlsMap>>) -> Self {
+    pub fn new(tls: Arc<RwLock<TlsMap>>) -> Self {
         Self { tls }
     }
 }
@@ -109,16 +102,11 @@ impl From<TlsAcceptor> for TlsAcceptCallbacks {
 
 #[async_trait]
 impl TlsAccept for TlsAcceptor {
-    async fn certificate_callback(&self, ssl: &mut SslRef) -> () {
-        let keys = match self.tls.read() {
-            Ok(tls) => ssl
-                .servername(NameType::HOST_NAME)
-                .and_then(|sni| tls.get_tls(sni)),
-            Err(err) => {
-                error!("Error: Cannot lock tls map: {err}");
-                return;
-            }
-        };
+    async fn certificate_callback(&self, ssl: &mut TlsRef) -> () {
+        let tls = self.tls.read().await;
+        let keys = ssl
+            .servername(NameType::HOST_NAME)
+            .and_then(|sni| tls.get_tls(sni));
 
         if let Some((sni, pkey, cert)) = keys {
             if let Err(e) = ssl_use_certificate(ssl, &cert) {

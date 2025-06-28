@@ -1,9 +1,9 @@
 [package]
 name = "pingress-config"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 # serde
-serde = { version = "1.0.208", features = ["derive"] }
-serde_json = "1.0.125"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

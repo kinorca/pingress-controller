@@ -1,33 +1,27 @@
 [package]
-name = "pingress-proxy-server"
+name = "proxy-server"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
-pingress-config = { path = "../pingress-config" }
+pingress-config.workspace = true
 
 # pingora
-pingora = { version = "0.3.0", features = ["proxy"] }
+pingora = { workspace = true, features = ["proxy", "boringssl"] }
 
 # serde
-serde = { version = "1.0.208", features = ["derive"] }
-serde_json = "1.0.125"
-
-# command line
-clap = { version = "4.5.16", features = ["derive"] }
+serde_json.workspace = true
 
 # logs
-log = "0.4.22"
-env_logger = "0.11.5"
+log.workspace = true
 
 # async
-async-trait = "0.1.81"
-tokio = { version = "1.39.3", features = ["full"] }
-futures = "0.3.30"
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 # misc
-regex = "1.10.6"
+regex.workspace = true
 
 # reload
-notify = "6.1.1"
-nix = { version = "0.29.0", features = ["signal"] }
+notify.workspace = true
+nix = { workspace = true, features = ["signal"] }

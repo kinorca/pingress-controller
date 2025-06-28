@@ -2,11 +2,11 @@ mod host_port;
 mod load_balancer;
 
 use futures::{Stream, StreamExt};
-pub(crate) use host_port::run_host_port;
+pub use host_port::run_host_port;
 use k8s_openapi::api::networking::v1::Ingress;
 use kube::runtime::controller::Action;
 use kube::runtime::reflector::ObjectRef;
-pub(crate) use load_balancer::run_load_balancer;
+pub use load_balancer::run_load_balancer;
 use log::{error, info};
 use std::future::{ready, Future};
 use std::sync::Arc;
