@@ -16,7 +16,7 @@ async-trait = "0.1.88"
 kube = "1.1.0"
 k8s-openapi = "0.25.0"
 
-pingora = "0.5.0"
+pingora = "0.6.0"
 
 clap = "4.5.40"
 
