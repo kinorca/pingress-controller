@@ -11,7 +11,7 @@ proxy-server = { path = "proxy" }
 
 tokio = "1.45.1"
 futures = "0.3.31"
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 
 kube = "2.0.1"
 k8s-openapi = "0.26.0"
