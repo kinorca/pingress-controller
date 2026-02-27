@@ -29,7 +29,7 @@ nix = "0.31.1"
 regex = "1.12.2"
 
 log = "0.4.28"
-env_logger = "0.11.8"
+env_logger = "0.11.9"
 
 [package]
 name = "pingress-controller"
