@@ -485,7 +485,7 @@ name = "controller"
 version = "0.1.0"
 dependencies = [
  "futures",
- "k8s-openapi 0.27.0",
+ "k8s-openapi 0.27.1",
  "kube",
  "log",
  "pingress-config",
@@ -1294,9 +1294,9 @@ dependencies = [
 
 [[package]]
 name = "k8s-openapi"
-version = "0.27.0"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05a6d6f3611ad1d21732adbd7a2e921f598af6c92d71ae6e2620da4b67ee1f0d"
+checksum = "51b326f5219dd55872a72c1b6ddd1b830b8334996c667449c29391d657d78d5e"
 dependencies = [
  "base64",
  "jiff",
@@ -1993,7 +1993,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3aa964c4e12e6328388b7059c93aac37b052be7962bbb70dd239b515532be4bf"
 dependencies = [
  "arrayvec",
- "hashbrown 0.15.4",
+ "hashbrown 0.16.1",
  "parking_lot",
  "rand",
 ]
