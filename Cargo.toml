@@ -13,7 +13,7 @@ tokio = "1.51.1"
 futures = "0.3.32"
 async-trait = "0.1.89"
 
-kube = "2.0.1"
+kube = "3.1.0"
 k8s-openapi = "0.27.1"
 
 pingora = "0.8.0"
