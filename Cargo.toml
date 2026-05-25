@@ -9,7 +9,7 @@ pingress-config = { path = "pingress-config" }
 controller = { path = "controller" }
 proxy-server = { path = "proxy" }
 
-tokio = "1.51.1"
+tokio = "1.52.3"
 futures = "0.3.32"
 async-trait = "0.1.89"
 
