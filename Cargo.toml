@@ -14,7 +14,7 @@ futures = "0.3.32"
 async-trait = "0.1.89"
 
 kube = "3.1.0"
-k8s-openapi = "0.27.1"
+k8s-openapi = "0.28.0"
 
 pingora = "0.8.0"
 
