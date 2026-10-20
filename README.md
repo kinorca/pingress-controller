@@ -9,7 +9,10 @@ Pingress Controller consists of two components:
 - **Controller** — watches Kubernetes Ingress resources and generates proxy configuration
 - **Proxy Server** — a Pingora-based HTTP/HTTPS reverse proxy that routes traffic to backends
 
-The controller runs as a Kubernetes Deployment and manages a DaemonSet of proxy server pods on every node, binding directly to host ports 80 and 443.
+The controller runs as a Kubernetes Deployment and deploys the proxy server with one of two backends:
+
+- **HostPort** (`--backend=HostPort`) — a DaemonSet of proxy server pods on every node, binding directly to host ports 80 and 443 (shown below)
+- **LoadBalancer** (`--backend=LoadBalancer`) — a proxy Deployment and a Service of type `LoadBalancer` per Ingress, whose address is published to the Ingress status (see [LoadBalancer Backend](#loadbalancer-backend))
 
 ```
 ┌─────────────────────────────────────┐
@@ -42,11 +45,12 @@ ConfigMap                  Secret
 - **Dynamic configuration reload** — file system watcher detects ConfigMap/Secret changes and swaps routing rules and TLS certificates in place, without restarting the proxy
 - **HTTPS redirect** — plain HTTP requests to hosts with a certificate are redirected to HTTPS (308)
 - **DaemonSet deployment** — proxy runs on every node and binds to host ports for low-latency edge routing
+- **LoadBalancer deployment** — a dedicated proxy and load balancer per Ingress, with `status.loadBalancer` kept up to date
 - **Minimal container images** — `scratch` (controller) and distroless (proxy) based Docker images with no shell or package manager
 
 ## How It Works
 
-### Controller
+### Controller (HostPort)
 
 1. Watches all Ingress resources across the cluster that belong to an IngressClass whose `spec.controller` is `networking.kinorca.com/pingress-controller` (via `ingressClassName`, the legacy `kubernetes.io/ingress.class` annotation, or the default IngressClass)
 2. Converts Ingress rules into a `PingressConfiguration` JSON structure
@@ -54,6 +58,21 @@ ConfigMap                  Secret
 4. Creates or updates a ConfigMap and Secret in the `pingress-system` namespace
 5. Creates or updates a DaemonSet to deploy proxy pods
 6. Deletes the DaemonSet, ConfigMap, and Secret if no Ingresses remain
+
+### LoadBalancer Backend
+
+For each target Ingress, the controller creates the following resources named `pingress-<ingress name>` in the namespace of the Ingress:
+
+| Resource | Description |
+|----------|-------------|
+| ConfigMap | `proxy.json` generated from the rules of the Ingress |
+| Deployment | Proxy server pods (`--replicas`). The TLS secrets of the Ingress are mounted directly as a projected volume, so certificate renewal is followed without copying the secrets |
+| Service | `type: LoadBalancer` exposing ports 80 and 443 (`spec.loadBalancerClass` is set by `--load-balancer-class`) |
+
+- When the load balancer is provisioned, its IP address or hostname is copied to `status.loadBalancer.ingress` of the Ingress
+- The resources are owned by the Ingress, and are deleted when the Ingress is deleted or no longer belongs to a pingress IngressClass
+- Names containing `.` or longer than 63 characters are shortened, with a hash of the Ingress name appended
+- Existing resources not owned by the Ingress are never deleted; applying conflicting fields fails instead of overwriting them
 
 ### Proxy Server
 
@@ -81,8 +100,10 @@ ConfigMap                  Secret
 ### Install
 
 ```bash
-# Apply RBAC and namespace
+# Apply RBAC and namespace (HostPort backend)
 kubectl apply -f controller/manifests/hostport.yaml
+# or, for the LoadBalancer backend (and change --backend in pingress-controller.yaml)
+kubectl apply -f controller/manifests/load-balancer.yaml
 
 # Create the IngressClass
 kubectl apply -f controller/manifests/ingress-class.yaml
@@ -95,11 +116,13 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--backend` | Deployment backend mode (`HostPort`) | required |
-| `--namespace` | Namespace for proxy resources | `pingress-system` |
+| `--backend` | Deployment backend mode (`HostPort` or `LoadBalancer`) | required |
+| `--namespace` | Namespace for proxy resources (HostPort only) | `pingress-system` |
 | `--proxy-server-image` | Proxy server container image | `ghcr.io/kinorca/pingress-proxy-server:latest` |
-| `--image-pull-secret` | Image pull secret name | — |
-| `--node-selector` | Node selector labels (`key=value,...`) | — |
+| `--image-pull-secret` | Image pull secret name (must exist in the proxy namespace, i.e. the Ingress namespace for LoadBalancer) | — |
+| `--node-selector` | Node selector labels (`key=value,...`) (HostPort only) | — |
+| `--replicas` | Proxy pods per Ingress (LoadBalancer only) | `2` |
+| `--load-balancer-class` | `spec.loadBalancerClass` of the proxy Services (LoadBalancer only) | — |
 | `--listen-metrics` | Prometheus metrics listen address | `0.0.0.0:9090` |
 
 ### Proxy Server Arguments
@@ -124,7 +147,7 @@ Prometheus metrics are served in the OpenMetrics text format at `/metrics` on `-
 |--------|--------|-------------|
 | controller | `pingress_controller_reconciliations_total{result}` | Ingress reconciliations |
 | controller | `pingress_controller_reconcile_duration_seconds` | Time taken by a reconciliation |
-| controller | `pingress_controller_syncs_total{result}` | Regenerations of the managed resources |
+| controller | `pingress_controller_syncs_total{result}` | Regenerations of the managed resources (per Ingress for LoadBalancer) |
 | controller | `pingress_controller_managed_ingresses` | Ingresses handled by the controller |
 | controller | `pingress_controller_tls_hosts` | Hosts with an available TLS key pair |
 | proxy | `pingress_proxy_http_requests_total{method,status,backend}` | HTTP requests |
@@ -233,10 +256,10 @@ pingress-controller/
 
 ## Limitations
 
-- `LoadBalancer` backend mode is not yet implemented
 - Backend Service endpoints are resolved via DNS at request time, not tracked dynamically
 - Service ports must be specified by number; named ports are skipped
-- Only one `defaultBackend` is served for the whole cluster (the first one found)
+- With the HostPort backend, only one `defaultBackend` is served for the whole cluster (the first one found)
+- With the LoadBalancer backend, every Ingress gets its own load balancer; Ingresses cannot share one
 - The controller does not support multiple replicas with leader election
 
 ## License

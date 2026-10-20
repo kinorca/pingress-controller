@@ -1,16 +1,22 @@
 mod host_port;
 mod ingress_class;
+mod ingresses;
 mod load_balancer;
 mod metrics;
+mod proxy;
+mod tls;
 
 use futures::{Stream, StreamExt};
 pub use host_port::run_host_port;
+use k8s_openapi::api::core::v1::Secret;
 use k8s_openapi::api::networking::v1::Ingress;
-use kube::ResourceExt;
+use kube::api::{Patch, PatchParams};
 use kube::runtime::controller::Action;
-use kube::runtime::reflector::ObjectRef;
-pub use load_balancer::run_load_balancer;
+use kube::runtime::reflector::{ObjectRef, Store};
+use kube::{Api, ResourceExt};
+pub use load_balancer::{LoadBalancerOptions, run_load_balancer};
 pub use metrics::{Metrics, serve_metrics};
+use serde_json::json;
 use std::fmt::{Display, Formatter};
 use std::future::{Future, ready};
 use std::sync::Arc;
@@ -18,6 +24,8 @@ use std::time::Duration;
 use tracing::{debug, error};
 
 const FINALIZER: &str = "kinorca.com/pingress-controller";
+const FIELD_MANAGER: &str = "kinorca.com/pingress-controller";
+const MANAGED_BY_LABEL: (&str, &str) = ("app.kubernetes.io/managed-by", "pingress-controller");
 
 /// Delay before retrying a failed reconciliation
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -100,4 +108,48 @@ fn handle_error<C>(ingress: Arc<Ingress>, error: &ReconcileError, _ctx: Arc<C>) 
         "Reconcile failed"
     );
     Action::requeue(RETRY_INTERVAL)
+}
+
+fn is_managed(ingress: &Ingress) -> bool {
+    ingress.finalizers().iter().any(|f| f == FINALIZER)
+}
+
+/// Managed Ingresses using the TLS secret
+fn ingresses_referencing(store: &Store<Ingress>, secret: &Secret) -> Vec<ObjectRef<Ingress>> {
+    let name = secret.name_any();
+    let namespace = secret.namespace();
+    store
+        .state()
+        .iter()
+        .filter(|i| is_managed(i) && i.namespace() == namespace)
+        .filter(|i| {
+            i.spec
+                .as_ref()
+                .and_then(|s| s.tls.as_ref())
+                .is_some_and(|tls| tls.iter().any(|t| t.secret_name.as_ref() == Some(&name)))
+        })
+        .map(|i| ObjectRef::from_obj(i.as_ref()))
+        .collect()
+}
+
+async fn remove_finalizer(api: &Api<Ingress>, ingress: &Ingress) -> Result<(), kube::Error> {
+    let finalizers: Vec<&String> = ingress
+        .finalizers()
+        .iter()
+        .filter(|f| *f != FINALIZER)
+        .collect();
+    // resourceVersion makes the patch fail if finalizers have been changed meanwhile
+    let patch = json!({
+        "metadata": {
+            "finalizers": finalizers,
+            "resourceVersion": ingress.resource_version(),
+        }
+    });
+    api.patch(
+        &ingress.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(patch),
+    )
+    .await?;
+    Ok(())
 }

@@ -15,9 +15,13 @@ kube = { workspace = true, features = ["runtime"] }
 k8s-openapi = { workspace = true, features = ["latest"] }
 
 # serde
+serde.workspace = true
 serde_json.workspace = true
 
 # observability
 tracing.workspace = true
 prometheus-client.workspace = true
 axum = { workspace = true, features = ["http1", "tokio"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

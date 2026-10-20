@@ -1,0 +1,87 @@
+# RBAC for --backend=LoadBalancer.
+# The controller creates a proxy (Deployment, Service and ConfigMap) in the namespace of each
+# Ingress, so it needs to manage them in every namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pingress-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pingress-controller-cluster-role
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  # TLS secrets referenced by Ingresses are only read; they are mounted directly into the proxy
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - patch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pingress-controller-cluster-role-binding
+subjects:
+  - kind: ServiceAccount
+    namespace: pingress-system
+    name: pingress-controller-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pingress-controller-cluster-role
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pingress-controller-user
+  namespace: pingress-system

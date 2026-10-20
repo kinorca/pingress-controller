@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use controller::{Metrics, run_host_port, serve_metrics};
+use controller::{LoadBalancerOptions, Metrics, run_host_port, run_load_balancer, serve_metrics};
 use kube::Client;
 use std::sync::Arc;
 use tokio::signal::unix::SignalKind;
@@ -12,7 +12,6 @@ mod logging;
 #[value(rename_all = "PascalCase")]
 enum Type {
     HostPort,
-    /// Not implemented yet
     LoadBalancer,
 }
 
@@ -36,6 +35,14 @@ struct Args {
     /// Node selector labels. (--backend=HostPort only) (e.g.: "example.com/node-type=external-network")
     #[clap(long, value_delimiter = ',', num_args = 0.., value_parser = parse_key_value)]
     node_selector: Vec<(String, String)>,
+
+    /// Number of proxy pods per Ingress (--backend=LoadBalancer only)
+    #[clap(long, default_value_t = 2, value_parser = clap::value_parser!(i32).range(1..))]
+    replicas: i32,
+
+    /// `spec.loadBalancerClass` of the proxy Services (--backend=LoadBalancer only)
+    #[clap(long)]
+    load_balancer_class: Option<String>,
 
     /// Listen host and port number for Prometheus metrics
     #[clap(long, default_value = "0.0.0.0:9090")]
@@ -91,8 +98,18 @@ async fn main() {
             .await
         }
         Type::LoadBalancer => {
-            error!(backend = ?args.backend, "--backend=LoadBalancer is not implemented yet");
-            std::process::exit(2);
+            run_load_balancer(
+                client,
+                shutdown_signal(),
+                LoadBalancerOptions {
+                    image_pull_secret: args.image_pull_secret,
+                    proxy_server_image: args.proxy_server_image,
+                    replicas: args.replicas,
+                    load_balancer_class: args.load_balancer_class,
+                },
+                metrics,
+            )
+            .await
         }
     }
 }
