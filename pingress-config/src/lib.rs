@@ -44,7 +44,8 @@ pub enum Port {
 
 #[cfg(test)]
 mod tests {
-    use crate::PingressConfiguration;
+    use crate::{Backend, HttpPath, PathRule, PingressConfiguration, Port, Tls};
+    use serde_json::json;
 
     #[test]
     fn can_parse() {
@@ -82,5 +83,63 @@ mod tests {
         "#;
 
         serde_json::from_str::<PingressConfiguration>(json).expect("Can parse");
+    }
+
+    #[test]
+    fn can_parse_tls() {
+        let json = json!({
+            "host": "secure.example.com",
+            "tls": { "key": "/keys/tls.key", "cert": "/keys/tls.cert" },
+            "path": { "type": "Prefix", "path": "/" },
+            "backend": { "type": "Service", "name": "backend", "namespace": "app", "port": 443 }
+        });
+
+        let rule = serde_json::from_value::<PathRule>(json).expect("Can parse");
+        let tls = rule.tls.expect("tls is set");
+        assert_eq!(tls.key, "/keys/tls.key");
+        assert_eq!(tls.cert, "/keys/tls.cert");
+    }
+
+    #[test]
+    fn serialize_format() {
+        let config = PingressConfiguration {
+            rules: vec![PathRule {
+                host: "test.example.com".to_string(),
+                tls: Some(Tls {
+                    key: "key".to_string(),
+                    cert: "cert".to_string(),
+                }),
+                path: HttpPath::Exact("/v1".to_string()),
+                backend: Backend::Service {
+                    name: "backend".to_string(),
+                    namespace: "default".to_string(),
+                    port: Port::Number(8080),
+                },
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&config).unwrap(),
+            json!({
+                "rules": [{
+                    "host": "test.example.com",
+                    "tls": { "key": "key", "cert": "cert" },
+                    "path": { "type": "Exact", "path": "/v1" },
+                    "backend": {
+                        "type": "Service",
+                        "name": "backend",
+                        "namespace": "default",
+                        "port": 8080
+                    }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn reject_unknown_path_type() {
+        let json = json!({ "type": "Regex", "path": "/.*" });
+
+        assert!(serde_json::from_value::<HttpPath>(json).is_err());
     }
 }

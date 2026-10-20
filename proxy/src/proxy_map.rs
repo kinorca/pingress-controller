@@ -96,3 +96,157 @@ mod detail {
         pub(super) backend_host: String,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ProxyMap;
+    use pingress_config::{Backend, HttpPath, PathRule, PingressConfiguration, Port};
+
+    fn rule(host: &str, path: HttpPath, name: &str, port: u16) -> PathRule {
+        PathRule {
+            host: host.to_string(),
+            tls: None,
+            path,
+            backend: Backend::Service {
+                name: name.to_string(),
+                namespace: "default".to_string(),
+                port: Port::Number(port),
+            },
+        }
+    }
+
+    fn proxy_map(rules: Vec<PathRule>) -> ProxyMap {
+        ProxyMap::from(PingressConfiguration { rules })
+    }
+
+    #[test]
+    fn exact_host_with_prefix_path() {
+        let map = proxy_map(vec![rule(
+            "test.example.com",
+            HttpPath::Prefix("/api".to_string()),
+            "backend",
+            80,
+        )]);
+
+        assert_eq!(
+            map.get_backend("test.example.com", "/api"),
+            Some("backend.default:80".to_string())
+        );
+        assert_eq!(
+            map.get_backend("test.example.com", "/api/v1/users"),
+            Some("backend.default:80".to_string())
+        );
+        assert_eq!(map.get_backend("test.example.com", "/"), None);
+    }
+
+    #[test]
+    fn exact_host_with_exact_path() {
+        let map = proxy_map(vec![rule(
+            "test.example.com",
+            HttpPath::Exact("/v1/users".to_string()),
+            "backend-api",
+            8080,
+        )]);
+
+        assert_eq!(
+            map.get_backend("test.example.com", "/v1/users"),
+            Some("backend-api.default:8080".to_string())
+        );
+        assert_eq!(map.get_backend("test.example.com", "/v1/users/1"), None);
+        assert_eq!(map.get_backend("test.example.com", "/v1"), None);
+    }
+
+    #[test]
+    fn unknown_host() {
+        let map = proxy_map(vec![rule(
+            "test.example.com",
+            HttpPath::Prefix("/".to_string()),
+            "backend",
+            80,
+        )]);
+
+        assert_eq!(map.get_backend("other.example.com", "/"), None);
+    }
+
+    #[test]
+    fn wildcard_host() {
+        let map = proxy_map(vec![rule(
+            "*.example.net",
+            HttpPath::Prefix("/".to_string()),
+            "backend",
+            80,
+        )]);
+
+        assert_eq!(
+            map.get_backend("foo.example.net", "/"),
+            Some("backend.default:80".to_string())
+        );
+        assert_eq!(
+            map.get_backend("bar.example.net", "/index.html"),
+            Some("backend.default:80".to_string())
+        );
+        assert_eq!(map.get_backend("example.net", "/"), None);
+        assert_eq!(map.get_backend("foo.example.com", "/"), None);
+    }
+
+    #[test]
+    fn exact_host_takes_precedence_over_wildcard() {
+        let map = proxy_map(vec![
+            rule(
+                "*.example.com",
+                HttpPath::Prefix("/".to_string()),
+                "wildcard",
+                80,
+            ),
+            rule(
+                "test.example.com",
+                HttpPath::Prefix("/".to_string()),
+                "exact",
+                80,
+            ),
+        ]);
+
+        assert_eq!(
+            map.get_backend("test.example.com", "/"),
+            Some("exact.default:80".to_string())
+        );
+        assert_eq!(
+            map.get_backend("other.example.com", "/"),
+            Some("wildcard.default:80".to_string())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_wildcard_when_exact_path_does_not_match() {
+        let map = proxy_map(vec![
+            rule(
+                "test.example.com",
+                HttpPath::Exact("/exact".to_string()),
+                "exact",
+                80,
+            ),
+            rule(
+                "*.example.com",
+                HttpPath::Prefix("/".to_string()),
+                "wildcard",
+                80,
+            ),
+        ]);
+
+        assert_eq!(
+            map.get_backend("test.example.com", "/exact"),
+            Some("exact.default:80".to_string())
+        );
+        assert_eq!(
+            map.get_backend("test.example.com", "/other"),
+            Some("wildcard.default:80".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_configuration() {
+        let map = proxy_map(vec![]);
+
+        assert_eq!(map.get_backend("test.example.com", "/"), None);
+    }
+}

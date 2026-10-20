@@ -1,12 +1,12 @@
 use crate::controller::host_port::ingresses::GetFromIngresses;
 use crate::controller::host_port::{
-    manifest_labels, Context, CONFIG_KEY, CONFIG_MAP_NAME, FIELD_MANAGER,
+    CONFIG_KEY, CONFIG_MAP_NAME, Context, FIELD_MANAGER, manifest_labels,
 };
 use k8s_openapi::api::core::v1::ConfigMap;
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::Api;
+use kube::api::{DeleteParams, Patch, PatchParams};
 use std::collections::BTreeMap;
 
 pub(super) async fn apply_config_map(

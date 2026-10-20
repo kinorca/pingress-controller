@@ -8,7 +8,7 @@ use pingora::listeners::tls::TlsSettings;
 use pingora::listeners::{TlsAccept, TlsAcceptCallbacks};
 use pingora::protocols::tls::TlsRef;
 use pingora::server::Server;
-use pingora::services::Service;
+use pingora::services::ServiceWithDependents;
 use pingora::tls::ext::{ssl_use_certificate, ssl_use_private_key};
 use pingora::tls::ssl::NameType;
 use pingress_config::PingressConfiguration;
@@ -38,7 +38,7 @@ pub fn run_server(
         };
         Arc::new(RwLock::new(TlsMap::from(config)))
     };
-    let services: Vec<Box<dyn Service>> = {
+    let services: Vec<Box<dyn ServiceWithDependents>> = {
         vec![create_http_proxy(
             &server,
             config_file.clone(),
@@ -48,8 +48,7 @@ pub fn run_server(
         )]
     };
 
-    let mut prometheus_service_http =
-        pingora::services::listening::Service::prometheus_http_service();
+    let mut prometheus_service_http = pingora_prometheus::prometheus_http_service();
     prometheus_service_http.add_tcp("127.0.0.1:9090");
 
     server.add_service(prometheus_service_http);
@@ -68,7 +67,7 @@ fn create_http_proxy(
     listen_http: &str,
     listen_https: &str,
     tls: Arc<RwLock<TlsMap>>,
-) -> Box<dyn Service> {
+) -> Box<dyn ServiceWithDependents> {
     let mut http_proxy = pingora::proxy::http_proxy_service(
         &server.configuration,
         PingressHttpProxy::new(config_file),

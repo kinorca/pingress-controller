@@ -1,7 +1,7 @@
 use crate::proxy_map::ProxyMap;
 use async_trait::async_trait;
-use pingora::prelude::{HttpPeer, ProxyHttp};
 use pingora::ErrorType;
+use pingora::prelude::{HttpPeer, ProxyHttp};
 use pingress_config::PingressConfiguration;
 use std::fs::File;
 

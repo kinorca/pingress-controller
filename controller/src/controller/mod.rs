@@ -8,7 +8,7 @@ use kube::runtime::controller::Action;
 use kube::runtime::reflector::ObjectRef;
 pub use load_balancer::run_load_balancer;
 use log::{error, info};
-use std::future::{ready, Future};
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::time::Duration;
 
