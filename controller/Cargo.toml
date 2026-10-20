@@ -8,6 +8,7 @@ pingress-config.workspace = true
 
 # async
 futures.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 # kubernetes
 kube = { workspace = true, features = ["runtime"] }

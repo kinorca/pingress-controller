@@ -1,3 +1,6 @@
+//! LoadBalancer backend. Not implemented yet.
+#![allow(dead_code)]
+
 mod reconcile;
 
 use crate::controller::load_balancer::reconcile::reconcile;

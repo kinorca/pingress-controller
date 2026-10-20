@@ -27,5 +27,8 @@ spec:
           command: [ "/usr/local/bin/pingress-controller", "--backend=HostPort" ]
           env:
             - name: RUST_LOG
-              value: debug
-          imagePullPolicy: Always
+              value: info
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi

@@ -469,6 +469,7 @@ dependencies = [
  "log",
  "pingress-config",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2137,12 +2138,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "log",
- "nix",
  "notify",
  "pingora",
  "pingora-prometheus",
  "pingress-config",
- "regex",
  "serde_json",
  "tokio",
 ]

@@ -3,11 +3,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PingressConfiguration {
     pub rules: Vec<PathRule>,
+    /// Backend for requests that match no rule
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_backend: Option<Backend>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PathRule {
-    pub host: String,
+    /// `None` matches any host
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub tls: Option<Tls>,
     pub path: HttpPath,
     pub backend: Backend,
@@ -104,7 +109,7 @@ mod tests {
     fn serialize_format() {
         let config = PingressConfiguration {
             rules: vec![PathRule {
-                host: "test.example.com".to_string(),
+                host: Some("test.example.com".to_string()),
                 tls: Some(Tls {
                     key: "key".to_string(),
                     cert: "cert".to_string(),
@@ -116,6 +121,7 @@ mod tests {
                     port: Port::Number(8080),
                 },
             }],
+            default_backend: None,
         };
 
         assert_eq!(
@@ -134,6 +140,21 @@ mod tests {
                 }]
             })
         );
+    }
+
+    #[test]
+    fn can_parse_without_host_and_with_default_backend() {
+        let json = json!({
+            "rules": [{
+                "path": { "type": "Prefix", "path": "/" },
+                "backend": { "type": "Service", "name": "backend", "namespace": "app", "port": 80 }
+            }],
+            "default_backend": { "type": "Service", "name": "fallback", "namespace": "app", "port": 8080 }
+        });
+
+        let config = serde_json::from_value::<PingressConfiguration>(json).expect("Can parse");
+        assert!(config.rules[0].host.is_none());
+        assert!(config.default_backend.is_some());
     }
 
     #[test]

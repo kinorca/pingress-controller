@@ -1,6 +1,7 @@
-use crate::controller::host_port::SECRET_BASE_PATH;
-use k8s_openapi::api::networking::v1::{Ingress, IngressSpec};
+use crate::controller::host_port::{SECRET_BASE_PATH, tls_cert_file, tls_key_file};
+use k8s_openapi::api::networking::v1::{Ingress, IngressBackend, IngressSpec};
 use kube::ResourceExt;
+use log::warn;
 use pingress_config::{Backend, HttpPath, PathRule, PingressConfiguration, Port, Tls};
 use std::collections::HashSet;
 
@@ -13,103 +14,121 @@ pub(in crate::controller::host_port) struct TlsSecret {
 pub(super) trait GetFromIngresses {
     fn tls_secrets(&self) -> Vec<TlsSecret>;
 
-    fn config(&self) -> PingressConfiguration;
+    /// Build the proxy configuration. `tls_hosts` are the hosts whose key pair is available.
+    fn config(&self, tls_hosts: &HashSet<String>) -> PingressConfiguration;
 }
 
 impl GetFromIngresses for &[Ingress] {
     fn tls_secrets(&self) -> Vec<TlsSecret> {
-        self.iter()
-            .filter_map(|ingress| {
-                ingress
-                    .spec
-                    .as_ref()
-                    .map(|i| (i, ingress.namespace().unwrap_or("default".to_string())))
-            })
-            .filter_map(|(ingress, namespace)| {
-                ingress
-                    .tls
-                    .as_ref()
-                    .map(move |t| t.iter().map(move |t| (t, namespace.clone())))
-            })
-            .flatten()
-            .filter_map(|(tls, namespace)| {
-                tls.secret_name.clone().and_then(move |secret| {
-                    tls.hosts.clone().map(move |hosts| {
-                        hosts.into_iter().map(move |host| TlsSecret {
-                            host,
-                            secret: secret.clone(),
-                            namespace: namespace.clone(),
-                        })
-                    })
-                })
-            })
-            .flatten()
-            .collect()
-    }
-
-    fn config(&self) -> PingressConfiguration {
-        let mut rules = Vec::new();
+        let mut secrets = Vec::new();
         for ingress in self.iter() {
-            if let Some(rs) = ingress_to_config(ingress) {
-                rules.extend(rs);
+            let namespace = namespace_of(ingress);
+            let tls = ingress.spec.iter().flat_map(|s| s.tls.iter().flatten());
+            for tls in tls {
+                let Some(secret) = &tls.secret_name else {
+                    continue;
+                };
+                for host in tls.hosts.iter().flatten() {
+                    secrets.push(TlsSecret {
+                        host: host.to_ascii_lowercase(),
+                        secret: secret.clone(),
+                        namespace: namespace.clone(),
+                    });
+                }
             }
         }
-        PingressConfiguration { rules }
+        secrets
+    }
+
+    fn config(&self, tls_hosts: &HashSet<String>) -> PingressConfiguration {
+        let mut rules = Vec::new();
+        for ingress in self.iter() {
+            rules.extend(ingress_to_config(ingress, tls_hosts));
+        }
+
+        // Only one default backend can be served; the first one wins
+        let default_backend = self.iter().find_map(|i| {
+            let backend = i.spec.as_ref()?.default_backend.as_ref()?;
+            service_backend(backend, &namespace_of(i))
+        });
+
+        PingressConfiguration {
+            rules,
+            default_backend,
+        }
     }
 }
 
-fn ingress_to_config(ingress: &Ingress) -> Option<Vec<PathRule>> {
-    let spec = ingress.spec.as_ref()?;
+fn namespace_of(ingress: &Ingress) -> String {
+    ingress.namespace().unwrap_or("default".to_string())
+}
 
-    let tls = ingress_to_tls_map(spec).unwrap_or_default();
+fn ingress_to_config(ingress: &Ingress, tls_hosts: &HashSet<String>) -> Vec<PathRule> {
+    let Some(spec) = ingress.spec.as_ref() else {
+        return Vec::new();
+    };
+    let namespace = namespace_of(ingress);
+    let ingress_tls = ingress_tls_hosts(spec);
 
     let mut rules = Vec::new();
-    for path in spec.rules.as_ref()? {
-        let host = path.host.as_ref()?;
-        let rule = path.http.as_ref()?;
-        let tls = if tls.contains(host) {
-            Some(Tls {
-                key: format!("{SECRET_BASE_PATH}/{host}.key"),
-                cert: format!("{SECRET_BASE_PATH}/{host}.cert"),
-            })
-        } else {
-            None
+    for rule in spec.rules.iter().flatten() {
+        let Some(http) = rule.http.as_ref() else {
+            continue;
         };
-        let rs = rule.paths.iter().filter_map(|p| {
-            Some(PathRule {
-                host: host.to_string(),
+        let host = rule.host.as_ref().map(|h| h.to_ascii_lowercase());
+        let tls = host
+            .as_ref()
+            .filter(|h| ingress_tls.contains(*h) && tls_hosts.contains(*h))
+            .map(|h| Tls {
+                key: format!("{SECRET_BASE_PATH}/{}", tls_key_file(h)),
+                cert: format!("{SECRET_BASE_PATH}/{}", tls_cert_file(h)),
+            });
+
+        for p in &http.paths {
+            let Some(backend) = service_backend(&p.backend, &namespace) else {
+                warn!(
+                    "Skip path {:?} of Ingress {namespace}/{}: only services with port number are supported",
+                    p.path,
+                    ingress.name_any()
+                );
+                continue;
+            };
+            let path = p.path.clone().unwrap_or("/".to_string());
+            rules.push(PathRule {
+                host: host.clone(),
                 tls: tls.clone(),
+                // ImplementationSpecific is handled as Prefix
                 path: if p.path_type == "Exact" {
-                    HttpPath::Exact(p.path.clone().unwrap_or_default())
+                    HttpPath::Exact(path)
                 } else {
-                    HttpPath::Prefix(p.path.clone().unwrap_or_default())
+                    HttpPath::Prefix(path)
                 },
-                backend: {
-                    let service = p.backend.service.as_ref()?;
-                    Backend::Service {
-                        name: service.name.clone(),
-                        namespace: ingress.namespace().unwrap_or("default".to_string()),
-                        port: Port::Number(service.port.as_ref()?.number? as u16),
-                    }
-                },
-            })
-        });
-        rules.extend(rs);
+                backend,
+            });
+        }
     }
 
-    Some(rules)
+    rules
 }
 
-fn ingress_to_tls_map(ingress: &IngressSpec) -> Option<HashSet<String>> {
-    Some(
-        ingress
-            .tls
-            .as_ref()?
-            .iter()
-            .filter_map(|t| t.hosts.clone())
-            .flatten()
-            .collect(),
-    )
+fn service_backend(backend: &IngressBackend, namespace: &str) -> Option<Backend> {
+    let service = backend.service.as_ref()?;
+    let port = u16::try_from(service.port.as_ref()?.number?).ok()?;
+    Some(Backend::Service {
+        name: service.name.clone(),
+        namespace: namespace.to_string(),
+        port: Port::Number(port),
+    })
+}
+
+fn ingress_tls_hosts(ingress: &IngressSpec) -> HashSet<String> {
+    ingress
+        .tls
+        .iter()
+        .flatten()
+        .flat_map(|t| t.hosts.iter().flatten())
+        .map(|h| h.to_ascii_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -119,6 +138,11 @@ mod tests {
     use k8s_openapi::api::networking::v1::Ingress;
     use pingress_config::{Backend, HttpPath, Port};
     use serde_json::json;
+    use std::collections::HashSet;
+
+    fn tls_hosts(hosts: &[&str]) -> HashSet<String> {
+        hosts.iter().map(|h| h.to_string()).collect()
+    }
 
     fn ingress(value: serde_json::Value) -> Ingress {
         serde_json::from_value(value).expect("valid ingress")
@@ -178,12 +202,14 @@ mod tests {
     #[test]
     fn config_from_ingress() {
         let ingresses = [sample_ingress()];
-        let config = ingresses.as_slice().config();
+        let config = ingresses
+            .as_slice()
+            .config(&tls_hosts(&["secure.example.com"]));
 
         assert_eq!(config.rules.len(), 3);
 
         let r = &config.rules[0];
-        assert_eq!(r.host, "secure.example.com");
+        assert_eq!(r.host.as_deref(), Some("secure.example.com"));
         assert!(matches!(&r.path, HttpPath::Prefix(p) if p == "/"));
         let Backend::Service {
             name,
@@ -198,14 +224,18 @@ mod tests {
             tls.key,
             format!("{SECRET_BASE_PATH}/secure.example.com.key")
         );
+        assert_eq!(
+            tls.cert,
+            format!("{SECRET_BASE_PATH}/secure.example.com.crt")
+        );
 
         let r = &config.rules[1];
-        assert_eq!(r.host, "secure.example.com");
+        assert_eq!(r.host.as_deref(), Some("secure.example.com"));
         assert!(matches!(&r.path, HttpPath::Exact(p) if p == "/healthz"));
         assert!(r.tls.is_some());
 
         let r = &config.rules[2];
-        assert_eq!(r.host, "plain.example.com");
+        assert_eq!(r.host.as_deref(), Some("plain.example.com"));
         assert!(matches!(&r.path, HttpPath::Prefix(p) if p == "/api"));
         assert!(r.tls.is_none());
         let Backend::Service { name, port, .. } = &r.backend;
@@ -243,7 +273,7 @@ mod tests {
                 ]
             }
         }))];
-        let config = ingresses.as_slice().config();
+        let config = ingresses.as_slice().config(&HashSet::new());
 
         assert_eq!(config.rules.len(), 1);
         assert!(matches!(&config.rules[0].path, HttpPath::Prefix(p) if p == "/numbered"));
@@ -254,9 +284,64 @@ mod tests {
     #[test]
     fn config_from_ingress_without_spec() {
         let ingresses = [ingress(json!({ "metadata": { "name": "empty" } }))];
-        let config = ingresses.as_slice().config();
+        let config = ingresses.as_slice().config(&HashSet::new());
 
         assert!(config.rules.is_empty());
+    }
+
+    #[test]
+    fn tls_is_omitted_when_key_pair_is_unavailable() {
+        let ingresses = [sample_ingress()];
+        let config = ingresses.as_slice().config(&HashSet::new());
+
+        assert!(config.rules.iter().all(|r| r.tls.is_none()));
+    }
+
+    #[test]
+    fn rule_without_host_does_not_drop_other_rules() {
+        let ingresses = [ingress(json!({
+            "metadata": { "name": "mixed", "namespace": "app" },
+            "spec": {
+                "defaultBackend": {
+                    "service": { "name": "fallback", "port": { "number": 8080 } }
+                },
+                "rules": [
+                    { "host": "no-http.example.com" },
+                    {
+                        "http": {
+                            "paths": [{
+                                "pathType": "Prefix",
+                                "backend": { "service": { "name": "any", "port": { "number": 80 } } }
+                            }]
+                        }
+                    },
+                    {
+                        "host": "test.example.com",
+                        "http": {
+                            "paths": [{
+                                "path": "/",
+                                "pathType": "Prefix",
+                                "backend": { "service": { "name": "web", "port": { "number": 80 } } }
+                            }]
+                        }
+                    }
+                ]
+            }
+        }))];
+        let config = ingresses.as_slice().config(&HashSet::new());
+
+        assert_eq!(config.rules.len(), 2);
+        assert!(config.rules[0].host.is_none());
+        assert!(matches!(&config.rules[0].path, HttpPath::Prefix(p) if p == "/"));
+        assert_eq!(config.rules[1].host.as_deref(), Some("test.example.com"));
+        let Some(Backend::Service {
+            name, namespace, ..
+        }) = &config.default_backend
+        else {
+            panic!("default backend is set");
+        };
+        assert_eq!(name, "fallback");
+        assert_eq!(namespace, "app");
     }
 
     #[test]

@@ -1,20 +1,14 @@
 use clap::{Parser, ValueEnum};
-use controller::{run_host_port, run_load_balancer};
+use controller::run_host_port;
 use kube::Client;
-use log::{debug, info};
+use log::{debug, error, info};
 use tokio::signal::unix::SignalKind;
-
-#[macro_export]
-macro_rules! try_with_log {
-    ($trying:expr) => {
-        $trying.inspect_err(|e| ::log::error!("Error: {e}"))?
-    };
-}
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
 #[value(rename_all = "PascalCase")]
 enum Type {
     HostPort,
+    /// Not implemented yet
     LoadBalancer,
 }
 
@@ -36,8 +30,15 @@ struct Args {
     namespace: String,
 
     /// Node selector labels. (--backend=HostPort only) (e.g.: "example.com/node-type=external-network")
-    #[clap(long, value_delimiter = ',', num_args = 0..)]
-    node_selector: Vec<String>,
+    #[clap(long, value_delimiter = ',', num_args = 0.., value_parser = parse_key_value)]
+    node_selector: Vec<(String, String)>,
+}
+
+fn parse_key_value(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
+        _ => Err(format!("expected KEY=VALUE: '{s}'")),
+    }
 }
 
 #[tokio::main]
@@ -49,7 +50,13 @@ async fn main() {
     let args = Args::parse();
     debug!("Command line arguments: {args:?}");
 
-    let client = Client::try_default().await.unwrap();
+    let client = match Client::try_default().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Cannot create Kubernetes client: {e}");
+            std::process::exit(1);
+        }
+    };
 
     match args.backend {
         Type::HostPort => {
@@ -57,30 +64,25 @@ async fn main() {
                 client,
                 shutdown_signal(),
                 args.namespace,
-                args.node_selector,
+                args.node_selector.into_iter().collect(),
                 args.image_pull_secret,
                 args.proxy_server_image,
             )
             .await
         }
         Type::LoadBalancer => {
-            unimplemented!();
-            run_load_balancer(
-                client,
-                shutdown_signal(),
-                args.image_pull_secret,
-                args.proxy_server_image,
-            )
-            .await
+            error!("--backend=LoadBalancer is not implemented yet");
+            std::process::exit(2);
         }
     }
 }
 
 async fn shutdown_signal() {
-    tokio::signal::unix::signal(SignalKind::terminate())
-        .unwrap()
-        .recv()
-        .await
-        .expect("Failed to listen signal");
+    let mut terminate =
+        tokio::signal::unix::signal(SignalKind::terminate()).expect("Failed to listen signal");
+    tokio::select! {
+        _ = terminate.recv() => {}
+        r = tokio::signal::ctrl_c() => r.expect("Failed to listen signal"),
+    }
     info!("Receive signal");
 }

@@ -20,9 +20,5 @@ log.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-# misc
-regex.workspace = true
-
 # reload
 notify.workspace = true
-nix = { workspace = true, features = ["signal"] }

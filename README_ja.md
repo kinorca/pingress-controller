@@ -39,17 +39,18 @@ ConfigMap                  Secret
 - **HTTP / HTTPS ルーティング** — プレフィックスおよび完全一致パスマッチング
 - **ワイルドカードドメイン対応** — `*.example.com` 形式のホスト名に対応
 - **SNI ベースの TLS** — ホストごとの証明書選択。証明書の更新にプロキシの再起動は不要
-- **動的設定リロード** — ファイルシステムの変更を監視し、TLS 証明書を自動的に再読み込み
+- **動的設定リロード** — ConfigMap / Secret の変更を監視し、プロキシを再起動せずにルーティングルールと TLS 証明書を差し替え
+- **HTTPS リダイレクト** — 証明書のあるホストへの平文 HTTP リクエストを HTTPS へリダイレクト（308）
 - **DaemonSet デプロイ** — 全ノードでプロキシが動作し、ホストポートへ直接バインドすることで低レイテンシを実現
-- **最小限のコンテナイメージ** — OS レイヤーを持たない scratch ベースの Docker イメージ
+- **最小限のコンテナイメージ** — シェルやパッケージマネージャーを含まない `scratch`（Controller）および distroless（Proxy）ベースの Docker イメージ
 
 ## 動作の仕組み
 
 ### Controller
 
-1. クラスター全体の Ingress リソースを監視し、`ingressClassName: pingress` のものを対象とする
+1. クラスター全体の Ingress リソースを監視し、`spec.controller` が `networking.kinorca.com/pingress-controller` の IngressClass に属するもの（`ingressClassName`、旧来の `kubernetes.io/ingress.class` アノテーション、またはデフォルト IngressClass）を対象とする
 2. Ingress ルールを内部の `PingressConfiguration` JSON 構造に変換する
-3. 参照先の Kubernetes Secret から TLS 証明書を抽出する
+3. 参照先の Kubernetes Secret から TLS 証明書を抽出する（cert-manager などによる更新にも追従する）
 4. `pingress-system` 名前空間の ConfigMap と Secret を作成・更新する
 5. プロキシ Pod をデプロイするための DaemonSet を作成・更新する
 6. Ingress が 1 つも存在しなくなった場合、DaemonSet・ConfigMap・Secret を削除する
@@ -60,14 +61,14 @@ ConfigMap                  Secret
 2. HTTP (`:80`) および HTTPS (`:443`) リスナーをバインドする
 3. ホスト名をキーとした TLS マップをメモリ上に構築する
 4. 各リクエストの Host ヘッダーとパスをルールテーブルと照合してルーティングする
-5. 設定ディレクトリを監視し、変更を検知した際に TLS 証明書を再読み込みし、`SIGTERM` を送信してグレースフルリスタートを行う
+5. 設定ディレクトリと鍵ディレクトリを監視し、変更を検知した際に再起動せずルーティングテーブルと TLS 証明書を再読み込みする（新しい設定を読み込めない場合は現在の設定を維持する）
 
 ### ルーティングアルゴリズム
 
-- 完全一致ホスト名は `HashMap` で O(1) 検索
-- ワイルドカードホスト名はコンパイル済みの正規表現でマッチング
-- パスマッチングは `Prefix`（前方一致）と `Exact`（完全一致）に対応
-- 解決されたバックエンドは `<service>.<namespace>:<port>` 形式で、リクエスト時に DNS で名前解決される
+- 完全一致ホスト名 → ワイルドカードホスト名 → ホスト指定なしのルールの順に優先し、どれにも一致しなければ Ingress の `defaultBackend` を使用する
+- ワイルドカードホスト名（`*.example.com`）は Ingress の仕様どおり 1 ラベルのみに一致する
+- パスマッチングは `Prefix`（パス要素単位。`/foo` は `/foo/bar` に一致し `/foobar` には一致しない）と `Exact`（完全一致）に対応し、`ImplementationSpecific` は `Prefix` として扱う。最も長いパスが優先される
+- 解決されたバックエンドは `<service>.<namespace>.svc:<port>` 形式で、リクエスト時に DNS で名前解決される
 
 ## デプロイ
 
@@ -96,7 +97,7 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 |--------|------|------------|
 | `--backend` | デプロイバックエンドモード（`HostPort`） | 必須 |
 | `--namespace` | プロキシリソースを配置する名前空間 | `pingress-system` |
-| `--proxy-server-image` | プロキシサーバーのコンテナイメージ | 必須 |
+| `--proxy-server-image` | プロキシサーバーのコンテナイメージ | `ghcr.io/kinorca/pingress-proxy-server:latest` |
 | `--image-pull-secret` | イメージプルシークレット名 | — |
 | `--node-selector` | ノードセレクターラベル（`key=value,...`） | — |
 
@@ -105,9 +106,10 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 | フラグ | 説明 | デフォルト |
 |--------|------|------------|
 | `--config` | proxy.json 設定ファイルのパス | 必須 |
-| `--watch` | 設定変更を監視するディレクトリ | 必須 |
+| `--watch` | 設定変更を監視するディレクトリ（複数指定可） | `--config` のディレクトリ |
 | `--listen-http` | HTTP リッスンアドレス | `0.0.0.0:80` |
 | `--listen-https` | HTTPS リッスンアドレス | `0.0.0.0:443` |
+| `--listen-metrics` | Prometheus メトリクスのリッスンアドレス | `0.0.0.0:9090` |
 
 ## Ingress の設定例
 
@@ -159,12 +161,20 @@ Controller はプロキシサーバーが読み込む JSON 設定ファイルを
       },
       "tls": {
         "key": "/etc/pingress/keys/example.com.key",
-        "cert": "/etc/pingress/keys/example.com.cert"
+        "cert": "/etc/pingress/keys/example.com.crt"
       }
     }
-  ]
+  ],
+  "default_backend": {
+    "type": "Service",
+    "name": "fallback",
+    "namespace": "default",
+    "port": 80
+  }
 }
 ```
+
+ホスト指定のないルールでは `host` が、`defaultBackend` を持つ Ingress がない場合は `default_backend` が省略されます。
 
 ## ビルド
 
@@ -181,7 +191,7 @@ docker build -f dockerfiles/controller.Dockerfile -t pingress-controller .
 docker build -f dockerfiles/server.Dockerfile -t pingress-proxy-server .
 ```
 
-Proxy Server イメージは Pingora の BoringSSL 依存関係のコンパイルに `alpine-sdk`、`perl`、`cmake` を必要とします。これらはマルチステージ Dockerfile 内で自動的に処理されます。
+イメージはリポジトリのルートをビルドコンテキストとしてビルドしてください。Proxy Server イメージは Pingora の BoringSSL 依存関係のコンパイルに `cmake` と `clang` を必要とし、静的リンクの musl ビルドでは bindgen が libclang を読み込めないため glibc 上でビルドします。これらはマルチステージ Dockerfile 内で自動的に処理されます。
 
 ## ワークスペース構成
 
@@ -199,7 +209,8 @@ pingress-controller/
 
 - `LoadBalancer` バックエンドモードは未実装
 - バックエンドの Service エンドポイントはリクエスト時に DNS で解決されるため、動的なエンドポイント追跡は行われない
-- 設定のリロードはプロキシプロセスへの `SIGTERM` 送信で行われる（既存コネクションのグレースフルドレインなし）
+- Service のポートは番号で指定する必要がある（名前付きポートはスキップされる）
+- `defaultBackend` はクラスター全体で 1 つのみ有効（最初に見つかったもの）
 - Controller は複数レプリカ（リーダー選出）に対応していない
 
 ## ライセンス
