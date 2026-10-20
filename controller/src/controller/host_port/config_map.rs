@@ -1,7 +1,7 @@
-use crate::controller::host_port::ingresses::GetFromIngresses;
-use crate::controller::host_port::{
-    CONFIG_KEY, CONFIG_MAP_NAME, Context, FIELD_MANAGER, manifest_labels,
-};
+use crate::controller::FIELD_MANAGER;
+use crate::controller::host_port::{CONFIG_MAP_NAME, Context, manifest_labels};
+use crate::controller::ingresses::GetFromIngresses;
+use crate::controller::proxy::CONFIG_KEY;
 use k8s_openapi::api::core::v1::ConfigMap;
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;

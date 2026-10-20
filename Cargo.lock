@@ -542,6 +542,7 @@ dependencies = [
  "kube",
  "pingress-config",
  "prometheus-client",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

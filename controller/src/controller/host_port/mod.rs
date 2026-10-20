@@ -1,17 +1,18 @@
 mod config_map;
 mod daemonset;
-mod ingresses;
 mod reconcile;
 mod secrets;
 
 use crate::controller::host_port::reconcile::reconcile;
-use crate::controller::{FINALIZER, LogControllerResult, Metrics, handle_error};
+use crate::controller::{
+    LogControllerResult, MANAGED_BY_LABEL, Metrics, handle_error, ingresses_referencing, is_managed,
+};
 use k8s_openapi::api::apps::v1::DaemonSet;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use k8s_openapi::api::networking::v1::Ingress;
 use kube::runtime::Controller;
 use kube::runtime::reflector::{ObjectRef, Store};
-use kube::{Api, Client, ResourceExt};
+use kube::{Api, Client};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -19,13 +20,8 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::info;
 
-const FIELD_MANAGER: &str = "kinorca.com/pingress-controller";
 const TLS_SECRET_NAME: &str = "pingress-tls-secret";
 const CONFIG_MAP_NAME: &str = "pingress-config";
-const CONFIG_KEY: &str = "proxy.json";
-const CONFIG_BASE_PATH: &str = "/etc/pingress/config";
-const SECRET_BASE_PATH: &str = "/etc/pingress/keys";
-const MANAGED_BY_LABEL: (&str, &str) = ("app.kubernetes.io/managed-by", "pingress-controller");
 
 pub async fn run_host_port<F>(
     client: Client,
@@ -101,10 +97,6 @@ pub async fn run_host_port<F>(
     info!("HostPort controller stopped");
 }
 
-fn is_managed(ingress: &Ingress) -> bool {
-    ingress.finalizers().iter().any(|f| f == FINALIZER)
-}
-
 /// Any one managed Ingress; reconciling any of them regenerates all managed resources
 fn any_managed_ingress(store: &Store<Ingress>) -> Option<ObjectRef<Ingress>> {
     store
@@ -112,23 +104,6 @@ fn any_managed_ingress(store: &Store<Ingress>) -> Option<ObjectRef<Ingress>> {
         .iter()
         .find(|i| is_managed(i))
         .map(|i| ObjectRef::from_obj(i.as_ref()))
-}
-
-fn ingresses_referencing(store: &Store<Ingress>, secret: &Secret) -> Vec<ObjectRef<Ingress>> {
-    let name = secret.name_any();
-    let namespace = secret.namespace();
-    store
-        .state()
-        .iter()
-        .filter(|i| is_managed(i) && i.namespace() == namespace)
-        .filter(|i| {
-            i.spec
-                .as_ref()
-                .and_then(|s| s.tls.as_ref())
-                .is_some_and(|tls| tls.iter().any(|t| t.secret_name.as_ref() == Some(&name)))
-        })
-        .map(|i| ObjectRef::from_obj(i.as_ref()))
-        .collect()
 }
 
 struct Context {
@@ -175,20 +150,4 @@ fn manifest_labels() -> Option<BTreeMap<String, String>> {
             "host-port".to_string(),
         ),
     ]))
-}
-
-/// Base name of the TLS files of the host. Secret keys cannot contain `*`, so it is replaced by
-/// `_`, which never appears in a valid Ingress host.
-fn tls_file_stem(host: &str) -> String {
-    host.replace('*', "_")
-}
-
-/// Key in the TLS secret (and file name in the proxy) of the certificate of the host
-fn tls_cert_file(host: &str) -> String {
-    format!("{}.crt", tls_file_stem(host))
-}
-
-/// Key in the TLS secret (and file name in the proxy) of the private key of the host
-fn tls_key_file(host: &str) -> String {
-    format!("{}.key", tls_file_stem(host))
 }

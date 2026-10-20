@@ -1,16 +1,15 @@
+use crate::controller::host_port::Context;
 use crate::controller::host_port::config_map::{apply_config_map, cleanup_config_map};
 use crate::controller::host_port::daemonset::{apply_daemonset, cleanup_daemonset};
 use crate::controller::host_port::secrets::{apply_tls_secrets, cleanup_tls_secret};
-use crate::controller::host_port::{Context, is_managed};
 use crate::controller::ingress_class::IngressClasses;
-use crate::controller::{FINALIZER, ReconcileError};
+use crate::controller::{FINALIZER, ReconcileError, is_managed, remove_finalizer};
 use k8s_openapi::api::networking::v1::Ingress;
-use kube::api::{ListParams, Patch, PatchParams};
+use kube::api::ListParams;
 use kube::runtime::controller::Action;
 use kube::runtime::finalizer;
 use kube::runtime::finalizer::Event;
 use kube::{Api, ResourceExt};
-use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, instrument};
@@ -53,28 +52,6 @@ pub(super) async fn reconcile(
     })
     .await?;
     Ok(action)
-}
-
-async fn remove_finalizer(api: &Api<Ingress>, ingress: &Ingress) -> Result<(), kube::Error> {
-    let finalizers: Vec<&String> = ingress
-        .finalizers()
-        .iter()
-        .filter(|f| *f != FINALIZER)
-        .collect();
-    // resourceVersion makes the patch fail if finalizers have been changed meanwhile
-    let patch = json!({
-        "metadata": {
-            "finalizers": finalizers,
-            "resourceVersion": ingress.resource_version(),
-        }
-    });
-    api.patch(
-        &ingress.name_any(),
-        &PatchParams::default(),
-        &Patch::Merge(patch),
-    )
-    .await?;
-    Ok(())
 }
 
 /// Regenerate all managed resources from the current Ingresses

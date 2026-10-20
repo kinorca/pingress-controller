@@ -1,11 +1,12 @@
-use crate::controller::host_port::{SECRET_BASE_PATH, tls_cert_file, tls_key_file};
+use crate::controller::proxy::SECRET_BASE_PATH;
+use crate::controller::tls::{tls_cert_file, tls_key_file};
 use k8s_openapi::api::networking::v1::{Ingress, IngressBackend, IngressSpec};
 use kube::ResourceExt;
 use pingress_config::{Backend, HttpPath, PathRule, PingressConfiguration, Port, Tls};
 use std::collections::HashSet;
 use tracing::warn;
 
-pub(in crate::controller::host_port) struct TlsSecret {
+pub(super) struct TlsSecret {
     pub host: String,
     pub secret: String,
     pub namespace: String,
@@ -59,7 +60,7 @@ impl GetFromIngresses for &[Ingress] {
     }
 }
 
-fn namespace_of(ingress: &Ingress) -> String {
+pub(super) fn namespace_of(ingress: &Ingress) -> String {
     ingress.namespace().unwrap_or("default".to_string())
 }
 
@@ -135,7 +136,7 @@ fn ingress_tls_hosts(ingress: &IngressSpec) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::GetFromIngresses;
-    use crate::controller::host_port::SECRET_BASE_PATH;
+    use crate::controller::proxy::SECRET_BASE_PATH;
     use k8s_openapi::api::networking::v1::Ingress;
     use pingress_config::{Backend, HttpPath, Port};
     use serde_json::json;

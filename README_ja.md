@@ -9,7 +9,10 @@ Pingress Controller は 2 つのコンポーネントで構成されています
 - **Controller** — Kubernetes の Ingress リソースを監視し、プロキシ設定を生成する
 - **Proxy Server** — バックエンドへのトラフィックをルーティングする Pingora ベースの HTTP/HTTPS リバースプロキシ
 
-Controller は Kubernetes Deployment として動作し、すべてのノードでプロキシサーバー Pod を DaemonSet として管理します。プロキシはホストポート 80 番・443 番に直接バインドします。
+Controller は Kubernetes Deployment として動作し、次の 2 つのバックエンドのいずれかでプロキシサーバーをデプロイします。
+
+- **HostPort**（`--backend=HostPort`）— すべてのノードでプロキシサーバー Pod を DaemonSet として管理し、ホストポート 80 番・443 番に直接バインドする（下図）
+- **LoadBalancer**（`--backend=LoadBalancer`）— Ingress ごとにプロキシの Deployment と `type: LoadBalancer` の Service を作成し、そのアドレスを Ingress の status に反映する（[LoadBalancer バックエンド](#loadbalancer-バックエンド) を参照）
 
 ```
 ┌─────────────────────────────────────┐
@@ -42,11 +45,12 @@ ConfigMap                  Secret
 - **動的設定リロード** — ConfigMap / Secret の変更を監視し、プロキシを再起動せずにルーティングルールと TLS 証明書を差し替え
 - **HTTPS リダイレクト** — 証明書のあるホストへの平文 HTTP リクエストを HTTPS へリダイレクト（308）
 - **DaemonSet デプロイ** — 全ノードでプロキシが動作し、ホストポートへ直接バインドすることで低レイテンシを実現
+- **LoadBalancer デプロイ** — Ingress ごとに専用のプロキシとロードバランサーを用意し、`status.loadBalancer` を自動で更新
 - **最小限のコンテナイメージ** — シェルやパッケージマネージャーを含まない `scratch`（Controller）および distroless（Proxy）ベースの Docker イメージ
 
 ## 動作の仕組み
 
-### Controller
+### Controller（HostPort）
 
 1. クラスター全体の Ingress リソースを監視し、`spec.controller` が `networking.kinorca.com/pingress-controller` の IngressClass に属するもの（`ingressClassName`、旧来の `kubernetes.io/ingress.class` アノテーション、またはデフォルト IngressClass）を対象とする
 2. Ingress ルールを内部の `PingressConfiguration` JSON 構造に変換する
@@ -54,6 +58,21 @@ ConfigMap                  Secret
 4. `pingress-system` 名前空間の ConfigMap と Secret を作成・更新する
 5. プロキシ Pod をデプロイするための DaemonSet を作成・更新する
 6. Ingress が 1 つも存在しなくなった場合、DaemonSet・ConfigMap・Secret を削除する
+
+### LoadBalancer バックエンド
+
+対象の Ingress ごとに、Ingress と同じ名前空間に `pingress-<Ingress 名>` という名前で次のリソースを作成します。
+
+| リソース | 説明 |
+|----------|------|
+| ConfigMap | Ingress のルールから生成した `proxy.json` |
+| Deployment | プロキシサーバー Pod（`--replicas`）。Ingress の TLS Secret を projected ボリュームとして直接マウントするため、Secret をコピーせずに証明書の更新へ追従する |
+| Service | ポート 80・443 を公開する `type: LoadBalancer`（`--load-balancer-class` で `spec.loadBalancerClass` を指定可能） |
+
+- ロードバランサーがプロビジョニングされると、その IP アドレスまたはホスト名を Ingress の `status.loadBalancer.ingress` に反映する
+- 各リソースは Ingress を所有者とし、Ingress が削除されたとき、または pingress の IngressClass に属さなくなったときに削除される
+- `.` を含む名前や 63 文字を超える名前は短縮され、Ingress 名のハッシュが付加される
+- Ingress が所有していない既存のリソースは削除しない。競合するフィールドの適用は上書きせずに失敗する
 
 ### Proxy Server
 
@@ -81,8 +100,10 @@ ConfigMap                  Secret
 ### インストール
 
 ```bash
-# RBAC と名前空間を適用
+# RBAC と名前空間を適用（HostPort バックエンド）
 kubectl apply -f controller/manifests/hostport.yaml
+# LoadBalancer バックエンドの場合（pingress-controller.yaml の --backend も変更する）
+kubectl apply -f controller/manifests/load-balancer.yaml
 
 # IngressClass を作成
 kubectl apply -f controller/manifests/ingress-class.yaml
@@ -95,11 +116,13 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 
 | フラグ | 説明 | デフォルト |
 |--------|------|------------|
-| `--backend` | デプロイバックエンドモード（`HostPort`） | 必須 |
-| `--namespace` | プロキシリソースを配置する名前空間 | `pingress-system` |
+| `--backend` | デプロイバックエンドモード（`HostPort` または `LoadBalancer`） | 必須 |
+| `--namespace` | プロキシリソースを配置する名前空間（HostPort のみ） | `pingress-system` |
 | `--proxy-server-image` | プロキシサーバーのコンテナイメージ | `ghcr.io/kinorca/pingress-proxy-server:latest` |
-| `--image-pull-secret` | イメージプルシークレット名 | — |
-| `--node-selector` | ノードセレクターラベル（`key=value,...`） | — |
+| `--image-pull-secret` | イメージプルシークレット名（プロキシの名前空間、LoadBalancer では Ingress の名前空間に必要） | — |
+| `--node-selector` | ノードセレクターラベル（`key=value,...`）（HostPort のみ） | — |
+| `--replicas` | Ingress ごとのプロキシ Pod 数（LoadBalancer のみ） | `2` |
+| `--load-balancer-class` | プロキシ Service の `spec.loadBalancerClass`（LoadBalancer のみ） | — |
 | `--listen-metrics` | Prometheus メトリクスのリッスンアドレス | `0.0.0.0:9090` |
 
 ### Proxy Server の引数
@@ -124,7 +147,7 @@ Prometheus メトリクスは `--listen-metrics` の `/metrics` で OpenMetrics 
 |----------|------------|------|
 | controller | `pingress_controller_reconciliations_total{result}` | Ingress の reconcile 回数 |
 | controller | `pingress_controller_reconcile_duration_seconds` | reconcile の所要時間 |
-| controller | `pingress_controller_syncs_total{result}` | 管理リソースの再生成回数 |
+| controller | `pingress_controller_syncs_total{result}` | 管理リソースの再生成回数（LoadBalancer では Ingress ごと） |
 | controller | `pingress_controller_managed_ingresses` | コントローラーが扱う Ingress 数 |
 | controller | `pingress_controller_tls_hosts` | TLS 鍵ペアが利用可能なホスト数 |
 | proxy | `pingress_proxy_http_requests_total{method,status,backend}` | HTTP リクエスト数 |
@@ -233,10 +256,10 @@ pingress-controller/
 
 ## 既知の制限
 
-- `LoadBalancer` バックエンドモードは未実装
 - バックエンドの Service エンドポイントはリクエスト時に DNS で解決されるため、動的なエンドポイント追跡は行われない
 - Service のポートは番号で指定する必要がある（名前付きポートはスキップされる）
-- `defaultBackend` はクラスター全体で 1 つのみ有効（最初に見つかったもの）
+- HostPort バックエンドでは `defaultBackend` はクラスター全体で 1 つのみ有効（最初に見つかったもの）
+- LoadBalancer バックエンドでは Ingress ごとにロードバランサーが作成され、複数の Ingress で共有することはできない
 - Controller は複数レプリカ（リーダー選出）に対応していない
 
 ## ライセンス
