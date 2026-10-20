@@ -8,8 +8,8 @@ use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
-use log::warn;
 use std::collections::{BTreeMap, HashSet};
+use tracing::{info, warn};
 
 /// Collect key pairs referenced by the Ingresses into the TLS secret, and return the hosts whose
 /// key pair is available. Missing or malformed secrets are skipped so that they do not block the
@@ -24,15 +24,19 @@ pub(super) async fn apply_tls_secrets(
         let api: Api<Secret> = Api::namespaced(ctx.client.clone(), s.namespace.as_str());
         let Some(secret) = api.get_opt(s.secret.as_str()).await? else {
             warn!(
-                "TLS secret {}/{} for '{}' is not found",
-                s.namespace, s.secret, s.host
+                secret_namespace = s.namespace,
+                secret_name = s.secret,
+                host = s.host,
+                "TLS secret is not found"
             );
             continue;
         };
         let Some((cert, key)) = secret.extract_tls() else {
             warn!(
-                "TLS secret {}/{} for '{}' has no tls.crt or tls.key",
-                s.namespace, s.secret, s.host
+                secret_namespace = s.namespace,
+                secret_name = s.secret,
+                host = s.host,
+                "TLS secret has no tls.crt or tls.key"
             );
             continue;
         };
@@ -69,6 +73,11 @@ pub(super) async fn cleanup_tls_secret(ctx: &Context) -> Result<(), kube::Error>
     if api.get_opt(TLS_SECRET_NAME).await?.is_some() {
         api.delete(TLS_SECRET_NAME, &DeleteParams::default())
             .await?;
+        info!(
+            namespace = ctx.namespace,
+            name = TLS_SECRET_NAME,
+            "Deleted TLS secret as no Ingress is managed"
+        );
     }
     Ok(())
 }

@@ -1,6 +1,9 @@
 use clap::Parser;
-use log::{debug, error, info};
 use proxy_server::{ServerOptions, run_server};
+use tracing::{debug, error, info};
+
+#[path = "../logging.rs"]
+mod logging;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -26,13 +29,12 @@ struct Args {
 }
 
 fn main() {
-    env_logger::init();
-
-    info!("Starting pingress proxy server");
+    logging::init();
 
     let args = Args::parse();
 
-    debug!("Command line args: {args:?}");
+    info!("Starting pingress proxy server");
+    debug!(?args, "Command line arguments");
     let result = run_server(ServerOptions {
         config_file: args.config,
         watch: args.watch,
@@ -41,7 +43,7 @@ fn main() {
         listen_metrics: args.listen_metrics,
     });
     if let Err(e) = result {
-        error!("Cannot start pingress proxy server: {e}");
+        error!(error = %e, "Cannot start pingress proxy server");
         std::process::exit(1);
     }
 }

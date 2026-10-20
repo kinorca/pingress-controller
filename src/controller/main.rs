@@ -1,8 +1,12 @@
 use clap::{Parser, ValueEnum};
-use controller::run_host_port;
+use controller::{Metrics, run_host_port, serve_metrics};
 use kube::Client;
-use log::{debug, error, info};
+use std::sync::Arc;
 use tokio::signal::unix::SignalKind;
+use tracing::{debug, error, info};
+
+#[path = "../logging.rs"]
+mod logging;
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
 #[value(rename_all = "PascalCase")]
@@ -32,6 +36,10 @@ struct Args {
     /// Node selector labels. (--backend=HostPort only) (e.g.: "example.com/node-type=external-network")
     #[clap(long, value_delimiter = ',', num_args = 0.., value_parser = parse_key_value)]
     node_selector: Vec<(String, String)>,
+
+    /// Listen host and port number for Prometheus metrics
+    #[clap(long, default_value = "0.0.0.0:9090")]
+    listen_metrics: String,
 }
 
 fn parse_key_value(s: &str) -> Result<(String, String), String> {
@@ -43,20 +51,31 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-
-    info!("Starting pingress controller");
+    logging::init();
 
     let args = Args::parse();
-    debug!("Command line arguments: {args:?}");
+
+    info!(backend = ?args.backend, "Starting pingress controller");
+    debug!(?args, "Command line arguments");
 
     let client = match Client::try_default().await {
         Ok(c) => c,
         Err(e) => {
-            error!("Cannot create Kubernetes client: {e}");
+            error!(error = %e, "Cannot create Kubernetes client");
             std::process::exit(1);
         }
     };
+
+    let metrics = Arc::new(Metrics::new());
+    tokio::spawn({
+        let metrics = metrics.clone();
+        let listen = args.listen_metrics.clone();
+        async move {
+            if let Err(e) = serve_metrics(listen.clone(), metrics).await {
+                error!(listen, error = %e, "Cannot serve metrics");
+            }
+        }
+    });
 
     match args.backend {
         Type::HostPort => {
@@ -67,11 +86,12 @@ async fn main() {
                 args.node_selector.into_iter().collect(),
                 args.image_pull_secret,
                 args.proxy_server_image,
+                metrics,
             )
             .await
         }
         Type::LoadBalancer => {
-            error!("--backend=LoadBalancer is not implemented yet");
+            error!(backend = ?args.backend, "--backend=LoadBalancer is not implemented yet");
             std::process::exit(2);
         }
     }
@@ -80,9 +100,12 @@ async fn main() {
 async fn shutdown_signal() {
     let mut terminate =
         tokio::signal::unix::signal(SignalKind::terminate()).expect("Failed to listen signal");
-    tokio::select! {
-        _ = terminate.recv() => {}
-        r = tokio::signal::ctrl_c() => r.expect("Failed to listen signal"),
-    }
-    info!("Receive signal");
+    let signal = tokio::select! {
+        _ = terminate.recv() => "SIGTERM",
+        r = tokio::signal::ctrl_c() => {
+            r.expect("Failed to listen signal");
+            "SIGINT"
+        }
+    };
+    info!(signal, "Received shutdown signal");
 }

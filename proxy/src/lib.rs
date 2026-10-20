@@ -1,7 +1,7 @@
 use crate::http_proxy::PingressHttpProxy;
+use crate::metrics::{Metrics, metrics_http_service};
 use crate::state::{ProxyState, SharedState};
 use crate::watcher::run_reload;
-use log::error;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::Server;
 use pingora::services::ServiceWithDependents;
@@ -9,9 +9,12 @@ use pingora::tls::ext::{ssl_use_certificate, ssl_use_private_key};
 use pingora::tls::ssl::{NameType, SslAcceptor, SslMethod, SslRef};
 use std::error::Error;
 use std::path::Path;
+use std::sync::Arc;
 use std::thread::spawn;
+use tracing::{debug, error, info};
 
 mod http_proxy;
+mod metrics;
 mod proxy_map;
 mod state;
 mod tls;
@@ -28,7 +31,16 @@ pub struct ServerOptions {
 }
 
 pub fn run_server(options: ServerOptions) -> Result<(), Box<dyn Error>> {
-    let state = SharedState::new(ProxyState::load(&options.config_file)?);
+    let metrics = Arc::new(Metrics::new());
+
+    let initial = ProxyState::load(&options.config_file)?;
+    let (routes, tls_certificates) = (initial.proxy_map.len(), initial.tls.len());
+    metrics.config_loaded(routes, tls_certificates);
+    info!(
+        config_file = %options.config_file,
+        routes, tls_certificates, "Configuration loaded"
+    );
+    let state = SharedState::new(initial);
 
     let mut server = Server::new(None)?;
     server.bootstrap();
@@ -36,14 +48,15 @@ pub fn run_server(options: ServerOptions) -> Result<(), Box<dyn Error>> {
     let services: Vec<Box<dyn ServiceWithDependents>> = vec![create_http_proxy(
         &server,
         state.clone(),
+        metrics.clone(),
         &options.listen_http,
         &options.listen_https,
     )?];
 
-    let mut prometheus_service_http = pingora_prometheus::prometheus_http_service();
-    prometheus_service_http.add_tcp(&options.listen_metrics);
+    let mut metrics_service = metrics_http_service(metrics.clone());
+    metrics_service.add_tcp(&options.listen_metrics);
 
-    server.add_service(prometheus_service_http);
+    server.add_service(metrics_service);
     server.add_services(services);
 
     let watch = if options.watch.is_empty() {
@@ -56,24 +69,31 @@ pub fn run_server(options: ServerOptions) -> Result<(), Box<dyn Error>> {
         options.watch
     };
     let config_file = options.config_file;
-    spawn(move || run_reload(&watch, &config_file, &state));
+    spawn(move || run_reload(&watch, &config_file, &state, &metrics));
 
+    info!(
+        listen_http = %options.listen_http,
+        listen_https = %options.listen_https,
+        listen_metrics = %options.listen_metrics,
+        "Starting proxy services"
+    );
     server.run_forever();
 }
 
 fn create_http_proxy(
     server: &Server,
     state: SharedState,
+    metrics: Arc<Metrics>,
     listen_http: &str,
     listen_https: &str,
 ) -> Result<Box<dyn ServiceWithDependents>, Box<dyn Error>> {
     let mut http_proxy = pingora::proxy::http_proxy_service(
         &server.configuration,
-        PingressHttpProxy::new(state.clone()),
+        PingressHttpProxy::new(state.clone(), metrics.clone()),
     );
     http_proxy.add_tcp(listen_http);
 
-    http_proxy.add_tls_with_settings(listen_https, None, tls_settings(state)?);
+    http_proxy.add_tls_with_settings(listen_https, None, tls_settings(state, metrics)?);
 
     Ok(Box::new(http_proxy))
 }
@@ -83,30 +103,34 @@ fn create_http_proxy(
 /// The certificate is set in the SNI callback instead of `TlsSettings::with_callbacks`, because
 /// pingora resumes that handshake with a null certificate callback, which crashes the BoringSSL
 /// bundled with `boring` 5.
-fn tls_settings(state: SharedState) -> Result<TlsSettings, Box<dyn Error>> {
+fn tls_settings(state: SharedState, metrics: Arc<Metrics>) -> Result<TlsSettings, Box<dyn Error>> {
     let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
     builder.set_servername_callback(move |ssl, _alert| {
-        use_certificate(ssl, &state);
+        use_certificate(ssl, &state, &metrics);
         Ok(())
     });
     Ok(TlsSettings::from(builder))
 }
 
 /// Set the key pair for the SNI. Without one, the handshake fails for lack of a certificate.
-fn use_certificate(ssl: &mut SslRef, state: &SharedState) {
+fn use_certificate(ssl: &mut SslRef, state: &SharedState, metrics: &Metrics) {
     let Some(sni) = ssl.servername(NameType::HOST_NAME).map(str::to_string) else {
+        debug!("TLS handshake without SNI");
+        metrics.inc_tls_certificate_not_found();
         return;
     };
     let state = state.get();
     let Some((pkey, cert)) = state.tls.get_tls(&sni) else {
+        debug!(sni, "No TLS certificate for the SNI");
+        metrics.inc_tls_certificate_not_found();
         return;
     };
 
     if let Err(e) = ssl_use_certificate(ssl, cert) {
-        error!("Error: Certificate for '{sni}': {e}");
+        error!(sni, error = %e, "Cannot use the TLS certificate");
         return;
     }
     if let Err(e) = ssl_use_private_key(ssl, pkey) {
-        error!("Error: Private key for '{sni}': {e}");
+        error!(sni, error = %e, "Cannot use the TLS private key");
     }
 }

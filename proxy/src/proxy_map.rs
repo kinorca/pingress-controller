@@ -37,6 +37,17 @@ impl ProxyMap {
             .map(|r| r.backend_host.as_str())
             .or(self.default_backend.as_deref())
     }
+
+    /// Number of routes, including the default backend
+    pub(crate) fn len(&self) -> usize {
+        self.exact_routes
+            .values()
+            .chain(self.wildcard_routes.values())
+            .map(Vec::len)
+            .sum::<usize>()
+            + self.any_host_routes.len()
+            + usize::from(self.default_backend.is_some())
+    }
 }
 
 /// The part that a single-label wildcard host must match (`foo.example.com` → `example.com`)

@@ -1,9 +1,9 @@
 use crate::controller::host_port::{SECRET_BASE_PATH, tls_cert_file, tls_key_file};
 use k8s_openapi::api::networking::v1::{Ingress, IngressBackend, IngressSpec};
 use kube::ResourceExt;
-use log::warn;
 use pingress_config::{Backend, HttpPath, PathRule, PingressConfiguration, Port, Tls};
 use std::collections::HashSet;
+use tracing::warn;
 
 pub(in crate::controller::host_port) struct TlsSecret {
     pub host: String,
@@ -87,9 +87,10 @@ fn ingress_to_config(ingress: &Ingress, tls_hosts: &HashSet<String>) -> Vec<Path
         for p in &http.paths {
             let Some(backend) = service_backend(&p.backend, &namespace) else {
                 warn!(
-                    "Skip path {:?} of Ingress {namespace}/{}: only services with port number are supported",
-                    p.path,
-                    ingress.name_any()
+                    namespace,
+                    name = ingress.name_any(),
+                    path = p.path,
+                    "Skip the path: only services with port number are supported"
                 );
                 continue;
             };
