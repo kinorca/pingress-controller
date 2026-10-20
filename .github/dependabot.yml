@@ -11,11 +11,17 @@ updates:
       interval: "daily"
     cooldown:
       default-days: 15
+    groups:
+      # kube and k8s-openapi must be updated together
+      kubernetes:
+        patterns:
+          - "kube"
+          - "k8s-openapi"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
   # - package-ecosystem: "docker"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
-  # - package-ecosystem: "github-actions"
   #   directory: "/"
   #   schedule:
   #     interval: "weekly"

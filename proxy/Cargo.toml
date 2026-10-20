@@ -8,6 +8,7 @@ pingress-config.workspace = true
 
 # pingora
 pingora = { workspace = true, features = ["proxy", "boringssl"] }
+pingora-prometheus.workspace = true
 
 # serde
 serde_json.workspace = true
