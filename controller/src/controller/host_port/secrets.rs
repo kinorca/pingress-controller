@@ -1,31 +1,45 @@
-use crate::controller::host_port::ingresses::{GetFromIngresses, TlsSecret};
-use crate::controller::host_port::{Context, FIELD_MANAGER, TLS_SECRET_NAME, manifest_labels};
+use crate::controller::host_port::ingresses::GetFromIngresses;
+use crate::controller::host_port::{
+    Context, FIELD_MANAGER, TLS_SECRET_NAME, manifest_labels, tls_cert_file, tls_key_file,
+};
 use k8s_openapi::ByteString;
 use k8s_openapi::api::core::v1::Secret;
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
-use kube::{Api, Client};
-use std::collections::BTreeMap;
+use log::warn;
+use std::collections::{BTreeMap, HashSet};
 
+/// Collect key pairs referenced by the Ingresses into the TLS secret, and return the hosts whose
+/// key pair is available. Missing or malformed secrets are skipped so that they do not block the
+/// other Ingresses.
 pub(super) async fn apply_tls_secrets(
     ctx: &Context,
     ingresses: &[Ingress],
-) -> Result<(), kube::Error> {
-    let tls_secrets = {
-        let secrets = ingresses.tls_secrets();
-
-        let mut ss = BTreeMap::new();
-        for s in secrets {
-            let secret = load_secrets(ctx.client.clone(), &s).await?;
-            if let Some((cert, key)) = secret.extract_tls() {
-                ss.insert(format!("{}.crt", s.host), cert);
-                ss.insert(format!("{}.key", s.host), key);
-            }
-        }
-
-        ss
-    };
+) -> Result<HashSet<String>, kube::Error> {
+    let mut data = BTreeMap::new();
+    let mut hosts = HashSet::new();
+    for s in ingresses.tls_secrets() {
+        let api: Api<Secret> = Api::namespaced(ctx.client.clone(), s.namespace.as_str());
+        let Some(secret) = api.get_opt(s.secret.as_str()).await? else {
+            warn!(
+                "TLS secret {}/{} for '{}' is not found",
+                s.namespace, s.secret, s.host
+            );
+            continue;
+        };
+        let Some((cert, key)) = secret.extract_tls() else {
+            warn!(
+                "TLS secret {}/{} for '{}' has no tls.crt or tls.key",
+                s.namespace, s.secret, s.host
+            );
+            continue;
+        };
+        data.insert(tls_cert_file(&s.host), cert);
+        data.insert(tls_key_file(&s.host), key);
+        hosts.insert(s.host);
+    }
 
     let secret = Secret {
         metadata: ObjectMeta {
@@ -34,7 +48,7 @@ pub(super) async fn apply_tls_secrets(
             labels: manifest_labels(),
             ..ObjectMeta::default()
         },
-        data: Some(tls_secrets),
+        data: Some(data),
         type_: Some("Opaque".to_string()),
         ..Secret::default()
     };
@@ -47,7 +61,7 @@ pub(super) async fn apply_tls_secrets(
     )
     .await?;
 
-    Ok(())
+    Ok(hosts)
 }
 
 pub(super) async fn cleanup_tls_secret(ctx: &Context) -> Result<(), kube::Error> {
@@ -57,11 +71,6 @@ pub(super) async fn cleanup_tls_secret(ctx: &Context) -> Result<(), kube::Error>
             .await?;
     }
     Ok(())
-}
-
-async fn load_secrets(client: Client, tls_secret: &TlsSecret) -> Result<Secret, kube::Error> {
-    let api: Api<Secret> = Api::namespaced(client, tls_secret.namespace.as_str());
-    api.get(tls_secret.secret.as_str()).await
 }
 
 trait ExtractTls {

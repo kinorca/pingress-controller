@@ -1,5 +1,4 @@
-/proxy/target/
-/pingress-config/target/
-/controller/target/
-/notify-config-change/target/
+/target/
+/.git/
 .idea/
+.vscode/

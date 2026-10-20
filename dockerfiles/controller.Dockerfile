@@ -1,16 +1,19 @@
+# Build from the repository root:
+#   docker build -f dockerfiles/controller.Dockerfile .
 FROM rust:alpine AS builder
 
 WORKDIR /work
-COPY ../controller controller
-COPY ../pingress-config pingress-config
+COPY Cargo.toml Cargo.lock ./
+COPY src src
+COPY controller controller
+COPY pingress-config pingress-config
+COPY proxy proxy
 
-RUN --mount=type=cache,target=/work/controller/target \
-    --mount=type=cache,target=/work/.cargo \
-    --mount=type=cache,target=/work/pingress-config/target \
-    apk add --no-cache musl-dev && \
-    cd controller && \
-    cargo build --release && \
-    cp /work/controller/target/release/pingress-controller /pingress-controller
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/work/target \
+    apk add --no-cache musl-dev cmake perl make g++ && \
+    cargo build --release --locked --features controller --bin controller && \
+    cp /work/target/release/controller /pingress-controller
 
 FROM scratch
 
@@ -20,4 +23,4 @@ LABEL org.opencontainers.image.url="https://github.com/kinorca/pingress-controll
 
 COPY --from=builder /pingress-controller /usr/local/bin/pingress-controller
 
-CMD ["/usr/local/bin/pingress-controller"]
+ENTRYPOINT ["/usr/local/bin/pingress-controller"]

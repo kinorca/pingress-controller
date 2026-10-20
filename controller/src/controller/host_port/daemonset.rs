@@ -1,18 +1,33 @@
 use crate::controller::host_port::{
-    CONFIG_KEY, CONFIG_MAP_NAME, Context, FIELD_MANAGER, SECRET_BASE_PATH, TLS_SECRET_NAME,
-    manifest_labels,
+    CONFIG_BASE_PATH, CONFIG_KEY, CONFIG_MAP_NAME, Context, FIELD_MANAGER, SECRET_BASE_PATH,
+    TLS_SECRET_NAME, manifest_labels,
 };
 use k8s_openapi::api::apps::v1::{DaemonSet, DaemonSetSpec};
 use k8s_openapi::api::core::v1::{
     ConfigMapVolumeSource, Container, ContainerPort, LocalObjectReference, PodSpec,
-    PodTemplateSpec, SecretVolumeSource, SecurityContext, Volume, VolumeMount,
+    PodTemplateSpec, Probe, ResourceRequirements, SecretVolumeSource, SecurityContext,
+    TCPSocketAction, Volume, VolumeMount,
 };
+use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
 use std::collections::BTreeMap;
 
 const DAEMONSET_NAME: &str = "pingress-proxy-server";
+
+fn tcp_probe(port: &str, initial_delay_seconds: i32) -> Probe {
+    Probe {
+        tcp_socket: Some(TCPSocketAction {
+            port: IntOrString::String(port.to_string()),
+            ..TCPSocketAction::default()
+        }),
+        initial_delay_seconds: Some(initial_delay_seconds),
+        period_seconds: Some(10),
+        ..Probe::default()
+    }
+}
 
 pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
     let daemonset = DaemonSet {
@@ -42,9 +57,12 @@ pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
                     containers: vec![Container {
                         command: Some(vec![
                             "/usr/local/bin/pingress-proxy-server".to_string(),
-                            format!("--config=/etc/pingress/config/{CONFIG_KEY}"),
+                            format!("--config={CONFIG_BASE_PATH}/{CONFIG_KEY}"),
+                            format!("--watch={CONFIG_BASE_PATH}"),
+                            format!("--watch={SECRET_BASE_PATH}"),
                             "--listen-http=0.0.0.0:8080".to_string(),
                             "--listen-https=0.0.0.0:8443".to_string(),
+                            "--listen-metrics=0.0.0.0:9090".to_string(),
                         ]),
                         image: Some(ctx.proxy_server_image.clone()),
                         name: "pingress-proxy-server".to_string(),
@@ -63,17 +81,29 @@ pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
                                 protocol: Some("TCP".to_string()),
                                 ..ContainerPort::default()
                             },
+                            ContainerPort {
+                                container_port: 9090,
+                                name: Some("metrics".to_string()),
+                                protocol: Some("TCP".to_string()),
+                                ..ContainerPort::default()
+                            },
                         ]),
-                        liveness_probe: None,
-                        readiness_probe: None,
-                        startup_probe: None,
+                        liveness_probe: Some(tcp_probe("http", 10)),
+                        readiness_probe: Some(tcp_probe("http", 0)),
+                        resources: Some(ResourceRequirements {
+                            requests: Some(BTreeMap::from([
+                                ("cpu".to_string(), Quantity("100m".to_string())),
+                                ("memory".to_string(), Quantity("64Mi".to_string())),
+                            ])),
+                            ..ResourceRequirements::default()
+                        }),
                         security_context: Some(SecurityContext {
                             read_only_root_filesystem: Some(true),
                             ..SecurityContext::default()
                         }),
                         volume_mounts: Some(vec![
                             VolumeMount {
-                                mount_path: "/etc/pingress/config".to_string(),
+                                mount_path: CONFIG_BASE_PATH.to_string(),
                                 name: CONFIG_MAP_NAME.to_string(),
                                 read_only: Some(true),
                                 ..VolumeMount::default()
@@ -96,7 +126,7 @@ pub(super) async fn apply_daemonset(ctx: &Context) -> Result<(), kube::Error> {
                         Volume {
                             name: TLS_SECRET_NAME.to_string(),
                             secret: Some(SecretVolumeSource {
-                                default_mode: Some(0o700),
+                                default_mode: Some(0o400),
                                 secret_name: Some(TLS_SECRET_NAME.to_string()),
                                 ..SecretVolumeSource::default()
                             }),

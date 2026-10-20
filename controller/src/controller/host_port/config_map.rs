@@ -7,13 +7,14 @@ use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) async fn apply_config_map(
     ctx: &Context,
     ingresses: &[Ingress],
+    tls_hosts: &HashSet<String>,
 ) -> Result<(), kube::Error> {
-    let config = ingresses.config();
+    let config = ingresses.config(tls_hosts);
 
     let config = serde_json::to_string(&config).map_err(kube::Error::SerdeError)?;
 
