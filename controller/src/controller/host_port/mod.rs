@@ -5,7 +5,7 @@ mod reconcile;
 mod secrets;
 
 use crate::controller::host_port::reconcile::reconcile;
-use crate::controller::{FINALIZER, LogControllerResult, handle_error};
+use crate::controller::{FINALIZER, LogControllerResult, Metrics, handle_error};
 use k8s_openapi::api::apps::v1::DaemonSet;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use k8s_openapi::api::networking::v1::Ingress;
@@ -15,7 +15,9 @@ use kube::{Api, Client, ResourceExt};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
+use tracing::info;
 
 const FIELD_MANAGER: &str = "kinorca.com/pingress-controller";
 const TLS_SECRET_NAME: &str = "pingress-tls-secret";
@@ -32,9 +34,17 @@ pub async fn run_host_port<F>(
     node_selector: BTreeMap<String, String>,
     image_pull_secret: Option<String>,
     proxy_server_image: String,
+    metrics: Arc<Metrics>,
 ) where
     F: Future<Output = ()> + Send + Sync + 'static,
 {
+    info!(
+        namespace,
+        ?node_selector,
+        proxy_server_image,
+        "Starting HostPort controller"
+    );
+
     let ingress_api: Api<Ingress> = Api::all(client.clone());
     let ingress_wc = kube::runtime::watcher::Config::default().any_semantic();
 
@@ -69,7 +79,12 @@ pub async fn run_host_port<F>(
             ingresses_referencing(&store, &secret)
         })
         .run(
-            |i, c| async { reconcile(i, c).await },
+            |i, c| async move {
+                let start = Instant::now();
+                let result = reconcile(i, c.clone()).await;
+                c.metrics.observe_reconcile(result.is_ok(), start.elapsed());
+                result
+            },
             handle_error,
             Arc::new(Context::new(
                 client,
@@ -77,10 +92,13 @@ pub async fn run_host_port<F>(
                 node_selector,
                 image_pull_secret,
                 proxy_server_image,
+                metrics,
             )),
         )
         .log_controller_result()
         .await;
+
+    info!("HostPort controller stopped");
 }
 
 fn is_managed(ingress: &Ingress) -> bool {
@@ -119,6 +137,7 @@ struct Context {
     node_selector: BTreeMap<String, String>,
     image_pull_secret: Option<String>,
     proxy_server_image: String,
+    metrics: Arc<Metrics>,
     /// Serializes generation of managed resources so that a stale Ingress list never overwrites a
     /// newer one
     sync_lock: Mutex<()>,
@@ -131,6 +150,7 @@ impl Context {
         node_selector: BTreeMap<String, String>,
         image_pull_secret: Option<String>,
         proxy_server_image: String,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             client,
@@ -138,6 +158,7 @@ impl Context {
             node_selector,
             image_pull_secret,
             proxy_server_image,
+            metrics,
             sync_lock: Mutex::new(()),
         }
     }

@@ -100,6 +100,7 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 | `--proxy-server-image` | プロキシサーバーのコンテナイメージ | `ghcr.io/kinorca/pingress-proxy-server:latest` |
 | `--image-pull-secret` | イメージプルシークレット名 | — |
 | `--node-selector` | ノードセレクターラベル（`key=value,...`） | — |
+| `--listen-metrics` | Prometheus メトリクスのリッスンアドレス | `0.0.0.0:9090` |
 
 ### Proxy Server の引数
 
@@ -110,6 +111,31 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 | `--listen-http` | HTTP リッスンアドレス | `0.0.0.0:80` |
 | `--listen-https` | HTTPS リッスンアドレス | `0.0.0.0:443` |
 | `--listen-metrics` | Prometheus メトリクスのリッスンアドレス | `0.0.0.0:9090` |
+
+### ログとメトリクス
+
+どちらのバイナリも JSON 形式の構造化ログ（1 行に 1 オブジェクト）を標準出力に出力します。ログレベルは
+`RUST_LOG` で指定します（デフォルト: `info`、例: `RUST_LOG=info,kube=warn`）。プロキシは全リクエストの
+アクセスログをターゲット `access` で出力します。不要な場合は `RUST_LOG=info,access=off` で無効化できます。
+
+Prometheus メトリクスは `--listen-metrics` の `/metrics` で OpenMetrics テキスト形式で公開されます。
+
+| バイナリ | メトリクス | 説明 |
+|----------|------------|------|
+| controller | `pingress_controller_reconciliations_total{result}` | Ingress の reconcile 回数 |
+| controller | `pingress_controller_reconcile_duration_seconds` | reconcile の所要時間 |
+| controller | `pingress_controller_syncs_total{result}` | 管理リソースの再生成回数 |
+| controller | `pingress_controller_managed_ingresses` | コントローラーが扱う Ingress 数 |
+| controller | `pingress_controller_tls_hosts` | TLS 鍵ペアが利用可能なホスト数 |
+| proxy | `pingress_proxy_http_requests_total{method,status,backend}` | HTTP リクエスト数 |
+| proxy | `pingress_proxy_http_request_duration_seconds{backend}` | リクエストの処理時間 |
+| proxy | `pingress_proxy_upstream_resolve_errors_total{backend}` | バックエンドの名前解決失敗数 |
+| proxy | `pingress_proxy_https_redirects_total` | HTTPS へリダイレクトした HTTP リクエスト数 |
+| proxy | `pingress_proxy_tls_certificate_not_found_total` | SNI に対応する証明書がなかった TLS ハンドシェイク数 |
+| proxy | `pingress_proxy_config_reloads_total{result}` | 設定の読み込み回数 |
+| proxy | `pingress_proxy_config_last_success_timestamp_seconds` | 最後に設定の読み込みに成功した時刻 |
+| proxy | `pingress_proxy_routes` | 現在の設定のルート数 |
+| proxy | `pingress_proxy_tls_certificates` | 現在の設定の TLS 証明書数 |
 
 ## Ingress の設定例
 

@@ -1,24 +1,32 @@
+use crate::metrics::{Metrics, RequestLabels};
 use crate::state::{ProxyState, SharedState};
 use async_trait::async_trait;
-use pingora::ErrorType;
+use http::Method;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::prelude::{HttpPeer, ProxyHttp};
 use pingora::proxy::Session;
+use pingora::{Error, ErrorType};
 use std::sync::Arc;
+use std::time::Instant;
+use tracing::{info, warn};
 
 pub(crate) struct PingressHttpProxy {
     state: SharedState,
+    metrics: Arc<Metrics>,
 }
 
 impl PingressHttpProxy {
-    pub(crate) fn new(state: SharedState) -> Self {
-        Self { state }
+    pub(crate) fn new(state: SharedState, metrics: Arc<Metrics>) -> Self {
+        Self { state, metrics }
     }
 }
 
 pub struct Context {
     /// Snapshot of the state, so that one request is handled with one configuration
     state: Arc<ProxyState>,
+    start: Instant,
+    /// Backend selected for the request
+    backend: Option<String>,
 }
 
 #[async_trait]
@@ -28,6 +36,8 @@ impl ProxyHttp for PingressHttpProxy {
     fn new_ctx(&self) -> Self::CTX {
         Context {
             state: self.state.get(),
+            start: Instant::now(),
+            backend: None,
         }
     }
 
@@ -60,6 +70,7 @@ impl ProxyHttp for PingressHttpProxy {
         resp.insert_header("Location", location)?;
         resp.insert_header("Content-Length", "0")?;
         session.write_response_header(Box::new(resp), true).await?;
+        self.metrics.inc_https_redirects();
         Ok(true)
     }
 
@@ -79,6 +90,7 @@ impl ProxyHttp for PingressHttpProxy {
                 format!("no route for {host}{path}"),
             );
         };
+        ctx.backend = Some(backend.to_string());
 
         // Resolve asynchronously; `HttpPeer::new` resolves with a blocking call and panics on
         // failure.
@@ -88,11 +100,65 @@ impl ProxyHttp for PingressHttpProxy {
             .and_then(|mut addrs| addrs.next());
         match addr {
             Some(addr) => Ok(Box::new(HttpPeer::new(addr, false, String::new()))),
-            None => pingora::Error::e_explain(
-                ErrorType::HTTPStatus(502),
-                format!("cannot resolve backend {backend}"),
-            ),
+            None => {
+                warn!(backend, host, "Cannot resolve backend");
+                self.metrics.inc_upstream_resolve_errors(backend);
+                pingora::Error::e_explain(
+                    ErrorType::HTTPStatus(502),
+                    format!("cannot resolve backend {backend}"),
+                )
+            }
         }
+    }
+
+    /// Record the access log and the metrics of the finished request
+    async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
+        let duration = ctx.start.elapsed();
+        let req = session.req_header();
+        // 0: no response has been sent (e.g. the client disconnected)
+        let status = session.response_written().map_or(0, |r| r.status.as_u16());
+        let backend = ctx.backend.take().unwrap_or_default();
+
+        info!(
+            target: "access",
+            method = %req.method,
+            host = request_host(req).unwrap_or_default(),
+            path = req.uri.path(),
+            status,
+            backend,
+            duration_ms = duration.as_secs_f64() * 1000.0,
+            client = session.client_addr().map(ToString::to_string),
+            user_agent = req.headers.get("User-Agent").and_then(|v| v.to_str().ok()),
+            tls = session.digest().is_some_and(|d| d.ssl_digest.is_some()),
+            error = e.map(ToString::to_string),
+            "Request"
+        );
+
+        self.metrics.observe_request(
+            RequestLabels {
+                method: method_label(&req.method).to_string(),
+                status,
+                backend,
+            },
+            duration,
+        );
+    }
+}
+
+/// Method name for a metrics label. Extension methods are put together so that the cardinality
+/// stays bounded.
+fn method_label(method: &Method) -> &'static str {
+    match *method {
+        Method::GET => "GET",
+        Method::HEAD => "HEAD",
+        Method::POST => "POST",
+        Method::PUT => "PUT",
+        Method::DELETE => "DELETE",
+        Method::CONNECT => "CONNECT",
+        Method::OPTIONS => "OPTIONS",
+        Method::TRACE => "TRACE",
+        Method::PATCH => "PATCH",
+        _ => "OTHER",
     }
 }
 
@@ -123,7 +189,8 @@ fn strip_port(authority: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{request_host, strip_port};
+    use super::{method_label, request_host, strip_port};
+    use http::Method;
     use pingora::http::RequestHeader;
 
     #[test]
@@ -148,6 +215,15 @@ mod tests {
         req.set_uri("https://example.com:443/path".parse().unwrap());
 
         assert_eq!(request_host(&req), Some("example.com"));
+    }
+
+    #[test]
+    fn method_labels() {
+        assert_eq!(method_label(&Method::GET), "GET");
+        assert_eq!(
+            method_label(&Method::from_bytes(b"PURGE").unwrap()),
+            "OTHER"
+        );
     }
 
     #[test]

@@ -25,6 +25,10 @@ spec:
         - name: pingress-controller
           image: ghcr.io/kinorca/pingress-controller
           command: [ "/usr/local/bin/pingress-controller", "--backend=HostPort" ]
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: RUST_LOG
               value: info

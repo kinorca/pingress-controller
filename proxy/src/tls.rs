@@ -1,10 +1,10 @@
 use crate::proxy_map::wildcard_suffix;
-use log::error;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use pingress_config::{PingressConfiguration, Tls};
 use std::collections::HashMap;
 use std::fs::read;
+use tracing::error;
 
 pub(crate) struct TlsMap {
     tls: HashMap<String, (PKey<Private>, X509)>,
@@ -23,6 +23,10 @@ impl TlsMap {
     pub(crate) fn contains(&self, host: &str) -> bool {
         self.get_tls(host).is_some()
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.tls.len()
+    }
 }
 
 impl From<PingressConfiguration> for TlsMap {
@@ -37,7 +41,7 @@ impl From<PingressConfiguration> for TlsMap {
                 .filter_map(|(host, tls)| match tls.load_key_cert() {
                     Ok(kc) => Some((host, kc)),
                     Err(e) => {
-                        error!("Cannot load TLS key pair for '{host}': {e}");
+                        error!(host, error = %e, "Cannot load TLS key pair");
                         None
                     }
                 })

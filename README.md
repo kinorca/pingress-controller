@@ -100,6 +100,7 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 | `--proxy-server-image` | Proxy server container image | `ghcr.io/kinorca/pingress-proxy-server:latest` |
 | `--image-pull-secret` | Image pull secret name | — |
 | `--node-selector` | Node selector labels (`key=value,...`) | — |
+| `--listen-metrics` | Prometheus metrics listen address | `0.0.0.0:9090` |
 
 ### Proxy Server Arguments
 
@@ -110,6 +111,31 @@ kubectl apply -f controller/manifests/pingress-controller.yaml
 | `--listen-http` | HTTP listen address | `0.0.0.0:80` |
 | `--listen-https` | HTTPS listen address | `0.0.0.0:443` |
 | `--listen-metrics` | Prometheus metrics listen address | `0.0.0.0:9090` |
+
+### Logs and Metrics
+
+Both binaries write JSON structured logs (one object per line) to stdout. The level is set with
+`RUST_LOG` (default: `info`), e.g. `RUST_LOG=info,kube=warn`. The proxy writes an access log of
+every request with the target `access`; disable it with `RUST_LOG=info,access=off`.
+
+Prometheus metrics are served in the OpenMetrics text format at `/metrics` on `--listen-metrics`.
+
+| Binary | Metric | Description |
+|--------|--------|-------------|
+| controller | `pingress_controller_reconciliations_total{result}` | Ingress reconciliations |
+| controller | `pingress_controller_reconcile_duration_seconds` | Time taken by a reconciliation |
+| controller | `pingress_controller_syncs_total{result}` | Regenerations of the managed resources |
+| controller | `pingress_controller_managed_ingresses` | Ingresses handled by the controller |
+| controller | `pingress_controller_tls_hosts` | Hosts with an available TLS key pair |
+| proxy | `pingress_proxy_http_requests_total{method,status,backend}` | HTTP requests |
+| proxy | `pingress_proxy_http_request_duration_seconds{backend}` | Request duration |
+| proxy | `pingress_proxy_upstream_resolve_errors_total{backend}` | Backend name resolution failures |
+| proxy | `pingress_proxy_https_redirects_total` | Plain HTTP requests redirected to HTTPS |
+| proxy | `pingress_proxy_tls_certificate_not_found_total` | TLS handshakes without a certificate for the SNI |
+| proxy | `pingress_proxy_config_reloads_total{result}` | Configuration loads |
+| proxy | `pingress_proxy_config_last_success_timestamp_seconds` | Time of the last successful configuration load |
+| proxy | `pingress_proxy_routes` | Routes in the current configuration |
+| proxy | `pingress_proxy_tls_certificates` | TLS certificates in the current configuration |
 
 ## Example Ingress
 

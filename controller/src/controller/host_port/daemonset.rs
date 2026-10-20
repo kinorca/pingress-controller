@@ -14,6 +14,7 @@ use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
 use std::collections::BTreeMap;
+use tracing::info;
 
 const DAEMONSET_NAME: &str = "pingress-proxy-server";
 
@@ -164,6 +165,11 @@ pub(super) async fn cleanup_daemonset(ctx: &Context) -> Result<(), kube::Error> 
     let api: Api<DaemonSet> = Api::namespaced(ctx.client.clone(), ctx.namespace.as_str());
     if api.get_opt(DAEMONSET_NAME).await?.is_some() {
         api.delete(DAEMONSET_NAME, &DeleteParams::default()).await?;
+        info!(
+            namespace = ctx.namespace,
+            name = DAEMONSET_NAME,
+            "Deleted DaemonSet as no Ingress is managed"
+        );
     }
     Ok(())
 }

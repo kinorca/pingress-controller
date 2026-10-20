@@ -8,6 +8,7 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{DeleteParams, Patch, PatchParams};
 use std::collections::{BTreeMap, HashSet};
+use tracing::info;
 
 pub(super) async fn apply_config_map(
     ctx: &Context,
@@ -45,6 +46,11 @@ pub(super) async fn cleanup_config_map(ctx: &Context) -> Result<(), kube::Error>
     if api.get_opt(CONFIG_MAP_NAME).await?.is_some() {
         api.delete(CONFIG_MAP_NAME, &DeleteParams::default())
             .await?;
+        info!(
+            namespace = ctx.namespace,
+            name = CONFIG_MAP_NAME,
+            "Deleted ConfigMap as no Ingress is managed"
+        );
     }
 
     Ok(())
